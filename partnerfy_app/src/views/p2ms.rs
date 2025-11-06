@@ -705,15 +705,37 @@ pub fn P2MS() -> Element {
                     if array_elements[2].starts_with("None") { "None".to_string() } else { format!("Some(0x{}...)", &array_elements[2].chars().skip(9).take(16).collect::<String>()) },
                 ));
                 
-                // Update the JSON with the new array string
-                if let Some(maybe_sigs) = witness_json.get_mut("MAYBE_SIGS") {
-                    if let Some(value_field) = maybe_sigs.get_mut("value") {
-                        *value_field = serde_json::Value::String(updated_array_string);
+                // Update the JSON with the new array string, ensuring "value" comes before "type"
+                // We'll rebuild the JSON structure to control field order
+                let mut updated_witness_json = serde_json::Map::new();
+        
+                if let Some(maybe_sigs) = witness_json.get("MAYBE_SIGS") {
+                    if let Some(maybe_sigs_obj) = maybe_sigs.as_object() {
+                        let mut maybe_sigs_map = serde_json::Map::new();
+                        
+                        // Insert "value" first
+                        maybe_sigs_map.insert("value".to_string(), serde_json::Value::String(updated_array_string));
+                        
+                        // Then insert "type" if it exists
+                        if let Some(type_field) = maybe_sigs_obj.get("type") {
+                            maybe_sigs_map.insert("type".to_string(), type_field.clone());
+                        } else {
+                            // Default type if not present
+                            maybe_sigs_map.insert("type".to_string(), serde_json::Value::String("[Option<Signature>; 3]".to_string()));
+                        }
+                        
+                        updated_witness_json.insert("MAYBE_SIGS".to_string(), serde_json::Value::Object(maybe_sigs_map));
                     }
+                } else {
+                    // Fallback: create new structure if MAYBE_SIGS doesn't exist
+                    let mut maybe_sigs_map = serde_json::Map::new();
+                    maybe_sigs_map.insert("value".to_string(), serde_json::Value::String(updated_array_string));
+                    maybe_sigs_map.insert("type".to_string(), serde_json::Value::String("[Option<Signature>; 3]".to_string()));
+                    updated_witness_json.insert("MAYBE_SIGS".to_string(), serde_json::Value::Object(maybe_sigs_map));
                 }
                 
-                // Convert back to JSON string
-                let updated_witness = match serde_json::to_string_pretty(&witness_json) {
+                // Convert back to JSON string with proper field order
+                let updated_witness = match serde_json::to_string_pretty(&serde_json::Value::Object(updated_witness_json)) {
                     Ok(json_str) => json_str,
                     Err(e) => {
                         status_message.set(format!("Failed to serialize updated witness JSON: {}", e));
