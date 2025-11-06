@@ -1,10 +1,11 @@
 /*
- * PAY TO MULTISIG (2-of-3)
+ * PAY TO MULTISIG
  *
  * The coins move if 2 of 3 people agree to move them. These people provide
  * their signatures, of which exactly 2 are required.
+ *
+ * https://docs.ivylang.org/bitcoin/language/ExampleContracts.html#lockwithmultisig
  */
-
 fn not(bit: bool) -> bool {
     <u1>::into(jet::complement_1(<bool>::into(bit)))
 }
@@ -40,9 +41,9 @@ fn check2of3multisig(pks: [Pubkey; 3], maybe_sigs: [Option<Signature>; 3]) {
 
 fn main() {
     let pks: [Pubkey; 3] = [
-        0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798, // 1*G
-        0xc6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5, // 2*G
-        0xf9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9, // 3*G
+        0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798, // 1 * G
+        0xc6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5, // 2 * G
+        0xf9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9, // 3 * G
     ];
     check2of3multisig(pks, witness::MAYBE_SIGS);
 }

@@ -635,23 +635,61 @@ pub fn P2MS() -> Element {
                 // - Position 1: signature for pk2 (0xc6047f94... = 2*G, private key ending in ...0002)
                 // - Position 2: signature for pk3 (0xf9308a01... = 3*G, private key ending in ...0003)
                 // We need exactly 2 signatures for 2-of-3 multisig
+                //
+                // IMPORTANT: The private keys must match the public keys in the .simf file.
+                // If you're getting "Jet failed during execution", the signatures might be in the wrong positions.
+                // Try swapping which private key goes in which position.
                 
                 // Build the array properly: [Some(0x...), None, Some(0x...)] etc.
                 // Start with all None, then replace with signatures in the correct positions
                 let mut array_elements = vec!["None".to_string(), "None".to_string(), "None".to_string()];
                 
-                // Place signatures in the correct positions
-                // sig1 corresponds to privkey_1 -> position 0 (pk1)
-                // sig2 corresponds to privkey_2 -> position 1 (pk2)
-                // sig3 corresponds to privkey_3 -> position 2 (pk3)
-                if let Some(ref sig) = sig1 {
-                    array_elements[0] = format!("Some(0x{})", sig);
-                }
-                if let Some(ref sig) = sig2 {
-                    array_elements[1] = format!("Some(0x{})", sig);
-                }
-                if let Some(ref sig) = sig3 {
-                    array_elements[2] = format!("Some(0x{})", sig);
+                // Count how many signatures we have
+                let sig_count = [&sig1, &sig2, &sig3].iter().filter(|s| s.is_some()).count();
+                
+                // Place signatures based on which private keys were provided
+                // The bash script uses PRIVKEY_1 and PRIVKEY_3, placing them in positions 0 and 2
+                // We'll do the same: if sig1 and sig3 are provided, use positions 0 and 2
+                // If sig1 and sig2 are provided, use positions 0 and 1
+                // If sig2 and sig3 are provided, use positions 1 and 2
+                
+                match (sig1.as_ref(), sig2.as_ref(), sig3.as_ref()) {
+                    (Some(s1), None, Some(s3)) => {
+                        // Most common case: sig1 and sig3 (matching bash script)
+                        array_elements[0] = format!("Some(0x{})", s1);
+                        array_elements[2] = format!("Some(0x{})", s3);
+                    }
+                    (Some(s1), Some(s2), None) => {
+                        // sig1 and sig2
+                        array_elements[0] = format!("Some(0x{})", s1);
+                        array_elements[1] = format!("Some(0x{})", s2);
+                    }
+                    (None, Some(s2), Some(s3)) => {
+                        // sig2 and sig3
+                        array_elements[1] = format!("Some(0x{})", s2);
+                        array_elements[2] = format!("Some(0x{})", s3);
+                    }
+                    (Some(s1), Some(s2), Some(s3)) => {
+                        // All three provided - use all
+                        array_elements[0] = format!("Some(0x{})", s1);
+                        array_elements[1] = format!("Some(0x{})", s2);
+                        array_elements[2] = format!("Some(0x{})", s3);
+                    }
+                    (Some(s1), None, None) => {
+                        // Only sig1 - place in position 0
+                        array_elements[0] = format!("Some(0x{})", s1);
+                    }
+                    (None, Some(s2), None) => {
+                        // Only sig2 - place in position 1
+                        array_elements[1] = format!("Some(0x{})", s2);
+                    }
+                    (None, None, Some(s3)) => {
+                        // Only sig3 - place in position 2
+                        array_elements[2] = format!("Some(0x{})", s3);
+                    }
+                    _ => {
+                        // No signatures (shouldn't happen due to earlier validation)
+                    }
                 }
                 
                 // Construct the final array string
