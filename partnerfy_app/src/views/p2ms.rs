@@ -264,26 +264,65 @@ pub fn P2MS() -> Element {
                     return;
                 }
                 
-                // Step 1: Create base PSET using elements-cli
-                status_message.set("Creating base PSET...".to_string());
-                let inputs = vec![(txid.clone(), vout)];
-                let outputs = vec![(destination.clone(), amount)];
+                // Step 1: Create base PSET using elements-cli createpsbt (matching the bash script)
+                // The script uses: elements-cli createpsbt '[ { "txid": "...", "vout": 0 } ]' '[ { "address": amount }, { "fee": fee_amount } ]'
+                status_message.set("Creating base PSET with elements-cli...".to_string());
                 
-                let base_pset = match rpc_context.create_pset(&inputs, &outputs).await {
+                let inputs = vec![(txid.clone(), vout)];
+                // Calculate fee: script uses 0.00000100 fee
+                let fee_amount = 0.00000100;
+                // Calculate output amount (total - fee, matching script: 0.00099900 = 0.001 - 0.00000100)
+                let output_amount = amount - fee_amount;
+                if output_amount <= 0.0 {
+                    status_message.set(format!("Amount {} is too small. Must be greater than fee {}.", amount, fee_amount));
+                    is_loading.set(false);
+                    return;
+                }
+                
+                let outputs = vec![(destination.clone(), output_amount)];
+                
+                // Create base PSET using elements-cli (matching script workflow)
+                let base_pset = match rpc_context.create_pset(&inputs, &outputs, Some(fee_amount)).await {
                     Ok(pset) => pset,
                     Err(e) => {
-                        status_message.set(format!("Failed to create base PSET: {}", e));
+                        status_message.set(format!("Failed to create base PSET with elements-cli: {}\n\nThis creates the initial PSET that will be updated with Simplicity data.", e));
                         is_loading.set(false);
                         return;
                     }
                 };
                 
-                // Step 2: Get UTXO data
-                status_message.set("Fetching UTXO data...".to_string());
-                let utxo_data = match rpc_context.get_txout(&txid, vout).await {
-                    Ok(data) => data,
-                    Err(e) => {
-                        status_message.set(format!("Failed to get UTXO data: {}\n\nTrying Blockstream API...", e));
+                // Step 2: Wait for UTXO to be available (like the script does)
+                // Script: while ! $ELEMENTS_CLI gettxout $FAUCET_TRANSACTION 0 | grep . >/dev/null; do sleep 5; done
+                status_message.set("Waiting for UTXO to be available...".to_string());
+                let mut utxo_data: Option<serde_json::Value> = None;
+                let mut attempts = 0;
+                const MAX_ATTEMPTS: u32 = 20; // Wait up to 100 seconds (20 * 5)
+                
+                while attempts < MAX_ATTEMPTS {
+                    match rpc_context.get_txout(&txid, vout).await {
+                        Ok(data) => {
+                            // Check if data is valid (not null/empty)
+                            if !data.is_null() {
+                                utxo_data = Some(data);
+                                break;
+                            }
+                        }
+                        Err(_) => {
+                            // UTXO not found yet, wait and retry
+                        }
+                    }
+                    
+                    attempts += 1;
+                    if attempts < MAX_ATTEMPTS {
+                        status_message.set(format!("UTXO not available yet, waiting... (attempt {}/{})", attempts + 1, MAX_ATTEMPTS));
+                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                    }
+                }
+                
+                let utxo_data = match utxo_data {
+                    Some(data) => data,
+                    None => {
+                        status_message.set(format!("UTXO not found after {} attempts. Trying Blockstream API...", MAX_ATTEMPTS));
                         // Try Blockstream API as fallback
                         match reqwest::Client::new()
                             .get(&format!("https://blockstream.info/liquidtestnet/api/tx/{}", txid))
@@ -319,21 +358,25 @@ pub fn P2MS() -> Element {
                     }
                 };
                 
+                // Extract UTXO data (matching script: HEX=$(jq -r .scriptPubKey.hex), ASSET=$(jq -r .asset), VALUE=$(jq -r .value))
                 let script_pubkey = utxo_data["scriptPubKey"]["hex"].as_str()
                     .or_else(|| utxo_data["scriptpubkey"].as_str())
                     .unwrap_or("");
                 let asset = utxo_data["asset"].as_str().unwrap_or("");
-                let value = utxo_data["value"].as_f64()
-                    .or_else(|| utxo_data["value"].as_u64().map(|v| v as f64 / 100_000_000.0))
-                    .unwrap_or(0.0);
+                // Script uses: VALUE=$(jq -r .value) - this is in sats (as a number)
+                // elements-cli gettxout returns value as a number (sats), not BTC
+                let value_sats = utxo_data["value"].as_u64()
+                    .or_else(|| utxo_data["value"].as_f64().map(|v| (v * 100_000_000.0) as u64))
+                    .unwrap_or(0);
                 
-                if script_pubkey.is_empty() || asset.is_empty() {
+                if script_pubkey.is_empty() || asset.is_empty() || value_sats == 0 {
                     status_message.set(format!("Failed to extract UTXO data. Response: {}", serde_json::to_string_pretty(&utxo_data).unwrap_or_default()));
                     is_loading.set(false);
                     return;
                 }
                 
                 // Step 3: Update PSET with Simplicity data using hal-simplicity
+                // Script: hal-simplicity simplicity pset update-input $PSET 0 -i $HEX:$ASSET:$VALUE -c $CMR -p "$INTERNAL_KEY"
                 status_message.set("Updating PSET with Simplicity data...".to_string());
                 
                 let internal_key_val = internal_key.read().clone();
@@ -343,7 +386,8 @@ pub fn P2MS() -> Element {
                     return;
                 }
                 
-                let value_str = format!("{}", (value * 100_000_000.0) as u64);
+                // Format: HEX:ASSET:VALUE (value in sats, matching script)
+                let value_str = value_sats.to_string();
                 let updated_pset = match hal_context.update_pset_input(
                     &base_pset,
                     0,
@@ -404,25 +448,31 @@ pub fn P2MS() -> Element {
                     return;
                 }
                 
-                // Step 1: Sign with private keys (if provided)
+                // Step 1: Sign with private keys and capture signatures
                 let mut current_pset = pset.clone();
                 let privkey1 = privkey_1.read().clone();
                 let privkey2 = privkey_2.read().clone();
                 let privkey3 = privkey_3.read().clone();
                 
-                // Sign with available private keys
+                let mut sig1: Option<String> = None;
+                let mut sig2: Option<String> = None;
+                let mut sig3: Option<String> = None;
+                
+                // Sign with available private keys and capture signatures
+                // Collect all errors to show at the end
+                let mut signing_errors = Vec::new();
+                
                 if !privkey1.is_empty() {
                     status_message.set("Signing with private key 1...".to_string());
                     match hal_context.sighash_and_sign(&current_pset, 0, &cmr, &privkey1) {
-                        Ok(_sig) => {
-                            // Note: The signature needs to be added to the witness file
-                            // For now, we'll proceed with compilation
-                            status_message.set("Signature 1 generated (needs to be added to witness file)".to_string());
+                        Ok(sig) => {
+                            sig1 = Some(sig);
+                            status_message.set("Signature 1 generated successfully".to_string());
                         }
                         Err(e) => {
-                            status_message.set(format!("Failed to sign with key 1: {}", e));
-                            is_loading.set(false);
-                            return;
+                            let error_msg = format!("Failed to sign with key 1:\n{}", e);
+                            signing_errors.push(error_msg.clone());
+                            status_message.set(format!("{}", error_msg));
                         }
                     }
                 }
@@ -430,13 +480,14 @@ pub fn P2MS() -> Element {
                 if !privkey2.is_empty() {
                     status_message.set("Signing with private key 2...".to_string());
                     match hal_context.sighash_and_sign(&current_pset, 0, &cmr, &privkey2) {
-                        Ok(_sig) => {
-                            status_message.set("Signature 2 generated (needs to be added to witness file)".to_string());
+                        Ok(sig) => {
+                            sig2 = Some(sig);
+                            status_message.set("Signature 2 generated successfully".to_string());
                         }
                         Err(e) => {
-                            status_message.set(format!("Failed to sign with key 2: {}", e));
-                            is_loading.set(false);
-                            return;
+                            let error_msg = format!("Failed to sign with key 2:\n{}", e);
+                            signing_errors.push(error_msg.clone());
+                            status_message.set(format!("{}", error_msg));
                         }
                     }
                 }
@@ -444,29 +495,177 @@ pub fn P2MS() -> Element {
                 if !privkey3.is_empty() {
                     status_message.set("Signing with private key 3...".to_string());
                     match hal_context.sighash_and_sign(&current_pset, 0, &cmr, &privkey3) {
-                        Ok(_sig) => {
-                            status_message.set("Signature 3 generated (needs to be added to witness file)".to_string());
+                        Ok(sig) => {
+                            sig3 = Some(sig);
+                            status_message.set("Signature 3 generated successfully".to_string());
                         }
                         Err(e) => {
-                            status_message.set(format!("Failed to sign with key 3: {}", e));
-                            is_loading.set(false);
-                            return;
+                            let error_msg = format!("Failed to sign with key 3:\n{}", e);
+                            signing_errors.push(error_msg.clone());
+                            status_message.set(format!("{}", error_msg));
                         }
                     }
                 }
                 
-                // Step 2: Compile program with witness file
-                status_message.set("Compiling program with witness file...".to_string());
-                let (program_with_witness, witness_data) = match hal_context.compile_simf_with_witness(&simf_path, &witness_path) {
-                    Ok((prog, wit)) => (prog, wit),
+                // Check if we have at least 2 signatures (required for 2-of-3 multisig)
+                let signature_count = [&sig1, &sig2, &sig3].iter().filter(|s| s.is_some()).count();
+                if signature_count < 2 {
+                    let all_errors = if signing_errors.is_empty() {
+                        "No signatures generated. Please provide at least 2 private keys.".to_string()
+                    } else {
+                        format!("Only {} signature(s) generated (need 2 for 2-of-3 multisig).\n\nErrors:\n{}", 
+                            signature_count,
+                            signing_errors.join("\n\n"))
+                    };
+                    status_message.set(all_errors);
+                    is_loading.set(false);
+                    return;
+                }
+                
+                if !signing_errors.is_empty() {
+                    status_message.set(format!("Warning: Some signatures failed, but continuing with {} successful signature(s).\n\nErrors:\n{}", 
+                        signature_count,
+                        signing_errors.join("\n\n")));
+                }
+                
+                // Step 2: Update witness file with signatures (like the script does with sed)
+                // Script: sed -i "s/\[Some([^)]*)/[Some(0x$SIGNATURE_1)/" and sed -i "s/Some([^)]*)]/Some(0x$SIGNATURE_3)]/"
+                status_message.set("Updating witness file with signatures...".to_string());
+                
+                // Read the original witness file (JSON format)
+                // Note: Signatures are PSET-specific, so we'll reset them to None and use fresh signatures
+                let witness_template = r#"{
+    "MAYBE_SIGS": {
+        "value": "[None, None, None]",
+        "type": "[Option<Signature>; 3]"
+    }
+}"#;
+                
+                let witness_content = match tokio::fs::read_to_string(&witness_path).await {
+                    Ok(content) if !content.trim().is_empty() => {
+                        // Parse existing file to validate structure, but we'll reset signatures
+                        // Signatures must match the current PSET, so we always start fresh
+                        match serde_json::from_str::<serde_json::Value>(&content) {
+                            Ok(_) => witness_template.to_string(), // Valid JSON, but reset signatures
+                            Err(_) => witness_template.to_string(), // Invalid JSON, use template
+                        }
+                    }
+                    _ => witness_template.to_string(), // File doesn't exist or is empty
+                };
+                
+                // Parse JSON and extract the array string from MAYBE_SIGS.value
+                let mut witness_json: serde_json::Value = match serde_json::from_str(&witness_content) {
+                    Ok(json) => json,
                     Err(e) => {
-                        status_message.set(format!("Failed to compile with witness: {}\n\nNote: You may need to manually update the witness file with signatures first.", e));
+                        status_message.set(format!("Failed to parse witness file as JSON: {}\n\nFile content:\n{}", e, witness_content));
                         is_loading.set(false);
                         return;
                     }
                 };
                 
-                // Step 3: Finalize PSET with hal-simplicity
+                // Get the array string from MAYBE_SIGS.value
+                let array_string = match witness_json["MAYBE_SIGS"]["value"].as_str() {
+                    Some(s) => s,
+                    None => {
+                        status_message.set(format!("Invalid witness file format: MAYBE_SIGS.value is not a string\n\nFile content:\n{}", witness_content));
+                        is_loading.set(false);
+                        return;
+                    }
+                };
+                
+                // Update signatures in the array string
+                // The program expects signatures in positions matching the public keys:
+                // - Position 0: signature for pk1 (0x79be667e... = 1*G, private key ending in ...0001)
+                // - Position 1: signature for pk2 (0xc6047f94... = 2*G, private key ending in ...0002)
+                // - Position 2: signature for pk3 (0xf9308a01... = 3*G, private key ending in ...0003)
+                // We need exactly 2 signatures for 2-of-3 multisig
+                
+                // Build the array properly: [Some(0x...), None, Some(0x...)] etc.
+                // Start with all None, then replace with signatures in the correct positions
+                let mut array_elements = vec!["None".to_string(), "None".to_string(), "None".to_string()];
+                
+                // Place signatures in the correct positions
+                // sig1 corresponds to privkey_1 -> position 0 (pk1)
+                // sig2 corresponds to privkey_2 -> position 1 (pk2)
+                // sig3 corresponds to privkey_3 -> position 2 (pk3)
+                if let Some(ref sig) = sig1 {
+                    array_elements[0] = format!("Some(0x{})", sig);
+                }
+                if let Some(ref sig) = sig2 {
+                    array_elements[1] = format!("Some(0x{})", sig);
+                }
+                if let Some(ref sig) = sig3 {
+                    array_elements[2] = format!("Some(0x{})", sig);
+                }
+                
+                // Construct the final array string
+                let updated_array_string = format!("[{}]", array_elements.join(", "));
+                
+                // Debug: Show which signatures were placed
+                let sig_count = array_elements.iter().filter(|s| !s.starts_with("None")).count();
+                status_message.set(format!(
+                    "Witness file updated with {} signature(s):\nPosition 0 (pk1): {}\nPosition 1 (pk2): {}\nPosition 2 (pk3): {}",
+                    sig_count,
+                    if array_elements[0].starts_with("None") { "None".to_string() } else { format!("Some(0x{}...)", &array_elements[0].chars().skip(9).take(16).collect::<String>()) },
+                    if array_elements[1].starts_with("None") { "None".to_string() } else { format!("Some(0x{}...)", &array_elements[1].chars().skip(9).take(16).collect::<String>()) },
+                    if array_elements[2].starts_with("None") { "None".to_string() } else { format!("Some(0x{}...)", &array_elements[2].chars().skip(9).take(16).collect::<String>()) },
+                ));
+                
+                // Update the JSON with the new array string
+                if let Some(maybe_sigs) = witness_json.get_mut("MAYBE_SIGS") {
+                    if let Some(value_field) = maybe_sigs.get_mut("value") {
+                        *value_field = serde_json::Value::String(updated_array_string);
+                    }
+                }
+                
+                // Convert back to JSON string
+                let updated_witness = match serde_json::to_string_pretty(&witness_json) {
+                    Ok(json_str) => json_str,
+                    Err(e) => {
+                        status_message.set(format!("Failed to serialize updated witness JSON: {}", e));
+                        is_loading.set(false);
+                        return;
+                    }
+                };
+                
+                // Write updated witness file to a temporary location
+                let temp_witness_path = format!("{}.tmp", witness_path);
+                match tokio::fs::write(&temp_witness_path, &updated_witness).await {
+                    Ok(_) => {
+                        status_message.set("Witness file updated with signatures".to_string());
+                    }
+                    Err(e) => {
+                        status_message.set(format!("Failed to write updated witness file: {}", e));
+                        is_loading.set(false);
+                        return;
+                    }
+                }
+                
+                // Step 3: Compile program with updated witness file
+                status_message.set("Compiling program with updated witness file...".to_string());
+                let (program_with_witness, witness_data) = match hal_context.compile_simf_with_witness(&simf_path, &temp_witness_path) {
+                    Ok((prog, wit)) => (prog, wit),
+                    Err(e) => {
+                        status_message.set(format!("Failed to compile with witness: {}", e));
+                        // Clean up temp file
+                        let _ = tokio::fs::remove_file(&temp_witness_path).await;
+                        is_loading.set(false);
+                        return;
+                    }
+                };
+                
+                // Optionally save updated witness file back to original location for inspection
+                // (The script uses a temp file, but we can save it back so user can see the result)
+                if let Err(e) = tokio::fs::write(&witness_path, &updated_witness).await {
+                    status_message.set(format!("Warning: Could not save updated witness file: {}. Continuing with temp file...", e));
+                } else {
+                    status_message.set("Witness file updated and saved".to_string());
+                }
+                
+                // Clean up temp file after successful compilation
+                let _ = tokio::fs::remove_file(&temp_witness_path).await;
+                
+                // Step 4: Finalize PSET with hal-simplicity
                 status_message.set("Finalizing PSET with program and witness...".to_string());
                 let finalized_pset = match hal_context.finalize_pset_with_witness(
                     &current_pset,
@@ -476,7 +675,31 @@ pub fn P2MS() -> Element {
                 ) {
                     Ok(pset) => pset,
                     Err(e) => {
-                        status_message.set(format!("Failed to finalize PSET: {}", e));
+                        // Provide detailed error message for "Jet failed during execution"
+                        let error_msg = e.to_string();
+                        let detailed_error = if error_msg.contains("Jet failed") || error_msg.contains("failed during execution") {
+                            format!(
+                                "Failed to finalize PSET: {}\n\n\
+                                This error ('Jet failed during execution') typically means:\n\
+                                1. Signatures don't match the public keys in the program\n\
+                                2. Private keys don't correspond to the public keys in p2ms.simf\n\
+                                3. The program expects:\n\
+                                   - Position 0: signature for pk1 (0x79be667e... = 1*G, use private key ending in ...0001)\n\
+                                   - Position 1: signature for pk2 (0xc6047f94... = 2*G, use private key ending in ...0002)\n\
+                                   - Position 2: signature for pk3 (0xf9308a01... = 3*G, use private key ending in ...0003)\n\
+                                4. You need exactly 2 valid signatures for 2-of-3 multisig\n\
+                                5. Signatures are PSET-specific - if you changed the PSET, you need new signatures\n\n\
+                                Check:\n\
+                                - Private keys match the public keys in your p2ms.simf file\n\
+                                - You provided at least 2 private keys\n\
+                                - The witness file was updated with the correct signatures\n\
+                                - The PSET hasn't changed since signing",
+                                error_msg
+                            )
+                        } else {
+                            format!("Failed to finalize PSET: {}", error_msg)
+                        };
+                        status_message.set(detailed_error);
                         is_loading.set(false);
                         return;
                     }
@@ -849,3 +1072,4 @@ pub fn P2MS() -> Element {
         }
     }
 }
+

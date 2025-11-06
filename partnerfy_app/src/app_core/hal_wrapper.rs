@@ -37,21 +37,62 @@ impl HalWrapper {
     /// Runs: simc <input.simf>
     /// Returns: The compiled base64 program string (from the last line of output)
     pub fn compile_simf(&self, input_path: &str) -> Result<String> {
-        let output = Command::new(&self.simc_cmd())
+        let cmd = self.simc_cmd();
+        let output = match Command::new(&cmd)
             .arg(input_path)
             .output()
-            .context("Failed to execute simc compiler")?;
+        {
+            Ok(o) => o,
+            Err(e) => {
+                let error_kind = e.kind();
+                let error_msg = if error_kind == std::io::ErrorKind::NotFound {
+                    format!(
+                        "simc compiler not found at: {}\n\nCommand: simc {}\n\nTroubleshooting:\n1. Check if simc is installed: which simc\n2. Verify PATH: echo $PATH\n3. Common locations:\n   - /usr/local/bin/simc\n   - /usr/bin/simc\n   - ~/.cargo/bin/simc\n   - ~/bin/simc\n4. Install SimplicityHL from: https://github.com/ElementsProject/simplicity\n\nOriginal error: {}",
+                        cmd, input_path, e
+                    )
+                } else if error_kind == std::io::ErrorKind::PermissionDenied {
+                    format!(
+                        "Permission denied when executing simc\n\nCommand: simc {}\n\nTroubleshooting:\n1. Check if simc has execute permissions: ls -l $(which simc)\n2. Try running: chmod +x /path/to/simc\n\nOriginal error: {}",
+                        input_path, e
+                    )
+                } else {
+                    format!(
+                        "Failed to execute simc compiler\n\nCommand: simc {}\n\nOriginal error: {}",
+                        input_path, e
+                    )
+                };
+                return Err(anyhow::anyhow!(error_msg));
+            }
+        };
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!(
-                "simc compilation failed: {}",
-                stderr
-            ));
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let exit_code = output.status.code().unwrap_or(-1);
+            
+            let mut error_details = format!(
+                "simc compilation failed with exit code {}\n\nCommand: simc {}\n\nStderr:\n{}\n\nStdout:\n{}",
+                exit_code, input_path, stderr, stdout
+            );
+            
+            // Add troubleshooting based on error content
+            if stderr.contains("No such file") || stderr.contains("not found") {
+                error_details.push_str("\n\nFile not found:\n");
+                error_details.push_str(&format!("1. Verify the file exists: ls -l {}\n", input_path));
+                error_details.push_str("2. Check the file path is correct\n");
+                error_details.push_str("3. Ensure you have read permissions\n");
+            } else if stderr.contains("syntax error") || stderr.contains("parse error") {
+                error_details.push_str("\n\nSyntax error detected:\n");
+                error_details.push_str("1. Check the SimplicityHL source file syntax\n");
+                error_details.push_str("2. Verify the file is a valid .simf file\n");
+                error_details.push_str("3. Review the error message above for specific issues\n");
+            }
+            
+            return Err(anyhow::anyhow!(error_details));
         }
 
         let stdout = String::from_utf8(output.stdout)
-            .context("Invalid UTF-8 in simc output")?;
+            .context(format!("Invalid UTF-8 in simc output\n\nCommand: simc {}\n\nOutput may contain binary data", input_path))?;
 
         // Parse output: simc outputs multiple lines, the last line is the compiled program
         // Extract the last non-empty line
@@ -59,12 +100,22 @@ impl HalWrapper {
             .lines()
             .rev()
             .find(|line| !line.trim().is_empty())
-            .ok_or_else(|| anyhow::anyhow!("Could not find program in simc output"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Could not find program in simc output\n\nCommand: simc {}\n\nOutput:\n{}",
+                    input_path,
+                    stdout.chars().take(500).collect::<String>()
+                )
+            })?
             .trim()
             .to_string();
 
         if program.is_empty() {
-            return Err(anyhow::anyhow!("Empty program in simc output"));
+            return Err(anyhow::anyhow!(
+                "Empty program in simc output\n\nCommand: simc {}\n\nOutput:\n{}",
+                input_path,
+                stdout.chars().take(500).collect::<String>()
+            ));
         }
 
         Ok(program)
@@ -80,22 +131,57 @@ impl HalWrapper {
     ///   Witness:
     ///   <witness_base64>
     pub fn compile_simf_with_witness(&self, input_path: &str, witness_path: &str) -> Result<(String, String)> {
-        let output = Command::new(&self.simc_cmd())
+        let cmd = self.simc_cmd();
+        let output = match Command::new(&cmd)
             .arg(input_path)
             .arg(witness_path)
             .output()
-            .context("Failed to execute simc compiler with witness")?;
+        {
+            Ok(o) => o,
+            Err(e) => {
+                let error_kind = e.kind();
+                let error_msg = if error_kind == std::io::ErrorKind::NotFound {
+                    format!(
+                        "simc compiler not found at: {}\n\nCommand: simc {} {}\n\nTroubleshooting:\n1. Check if simc is installed: which simc\n2. Verify PATH: echo $PATH\n3. Common locations:\n   - /usr/local/bin/simc\n   - /usr/bin/simc\n   - ~/.cargo/bin/simc\n4. Install SimplicityHL from: https://github.com/ElementsProject/simplicity\n\nOriginal error: {}",
+                        cmd, input_path, witness_path, e
+                    )
+                } else {
+                    format!(
+                        "Failed to execute simc compiler with witness\n\nCommand: simc {} {}\n\nOriginal error: {}",
+                        input_path, witness_path, e
+                    )
+                };
+                return Err(anyhow::anyhow!(error_msg));
+            }
+        };
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!(
-                "simc compilation with witness failed: {}",
-                stderr
-            ));
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let exit_code = output.status.code().unwrap_or(-1);
+            
+            let mut error_details = format!(
+                "simc compilation with witness failed with exit code {}\n\nCommand: simc {} {}\n\nStderr:\n{}\n\nStdout:\n{}",
+                exit_code, input_path, witness_path, stderr, stdout
+            );
+            
+            // Add troubleshooting
+            if stderr.contains("No such file") {
+                error_details.push_str("\n\nFile not found:\n");
+                error_details.push_str(&format!("1. Verify source file exists: ls -l {}\n", input_path));
+                error_details.push_str(&format!("2. Verify witness file exists: ls -l {}\n", witness_path));
+            } else if stderr.contains("syntax error") || stderr.contains("parse error") {
+                error_details.push_str("\n\nSyntax error detected:\n");
+                error_details.push_str("1. Check the SimplicityHL source file syntax\n");
+                error_details.push_str("2. Verify the witness file is valid JSON\n");
+                error_details.push_str("3. Check that signatures in witness file are correctly formatted\n");
+            }
+            
+            return Err(anyhow::anyhow!(error_details));
         }
 
         let stdout = String::from_utf8(output.stdout)
-            .context("Invalid UTF-8 in simc output")?;
+            .context(format!("Invalid UTF-8 in simc output\n\nCommand: simc {} {}", input_path, witness_path))?;
 
         // Parse output: simc outputs:
         //   Program:
@@ -107,27 +193,56 @@ impl HalWrapper {
         // Find program line (line after "Program:")
         let program_idx = lines.iter()
             .position(|line| line.trim().starts_with("Program:"))
-            .ok_or_else(|| anyhow::anyhow!("Could not find 'Program:' in simc output"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Could not find 'Program:' in simc output\n\nCommand: simc {} {}\n\nOutput:\n{}",
+                    input_path,
+                    witness_path,
+                    stdout.chars().take(500).collect::<String>()
+                )
+            })?;
         
         let program = if program_idx + 1 < lines.len() {
             lines[program_idx + 1].trim().to_string()
         } else {
-            return Err(anyhow::anyhow!("Program line missing after 'Program:'"));
+            return Err(anyhow::anyhow!(
+                "Program line missing after 'Program:'\n\nCommand: simc {} {}\n\nOutput:\n{}",
+                input_path,
+                witness_path,
+                stdout.chars().take(500).collect::<String>()
+            ));
         };
 
         // Find witness line (line after "Witness:")
         let witness_idx = lines.iter()
             .position(|line| line.trim().starts_with("Witness:"))
-            .ok_or_else(|| anyhow::anyhow!("Could not find 'Witness:' in simc output"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Could not find 'Witness:' in simc output\n\nCommand: simc {} {}\n\nOutput:\n{}",
+                    input_path,
+                    witness_path,
+                    stdout.chars().take(500).collect::<String>()
+                )
+            })?;
         
         let witness = if witness_idx + 1 < lines.len() {
             lines[witness_idx + 1].trim().to_string()
         } else {
-            return Err(anyhow::anyhow!("Witness line missing after 'Witness:'"));
+            return Err(anyhow::anyhow!(
+                "Witness line missing after 'Witness:'\n\nCommand: simc {} {}\n\nOutput:\n{}",
+                input_path,
+                witness_path,
+                stdout.chars().take(500).collect::<String>()
+            ));
         };
 
         if program.is_empty() || witness.is_empty() {
-            return Err(anyhow::anyhow!("Empty program or witness in simc output"));
+            return Err(anyhow::anyhow!(
+                "Empty program or witness in simc output\n\nCommand: simc {} {}\n\nOutput:\n{}",
+                input_path,
+                witness_path,
+                stdout.chars().take(500).collect::<String>()
+            ));
         }
 
         Ok((program, witness))
@@ -138,23 +253,64 @@ impl HalWrapper {
     /// Runs: hal-simplicity simplicity info <program.base64>
     /// Returns: JSON string with CMR, address, etc.
     pub fn get_covenant_info(&self, program_base64: &str) -> Result<String> {
-        let output = Command::new(&self.hal_cmd())
+        let cmd = self.hal_cmd();
+        let program_preview = if program_base64.len() > 100 {
+            format!("{}...", &program_base64[..100])
+        } else {
+            program_base64.to_string()
+        };
+        
+        let output = match Command::new(&cmd)
             .arg("simplicity")
             .arg("info")
             .arg(program_base64)
             .output()
-            .context("Failed to execute hal-simplicity")?;
+        {
+            Ok(o) => o,
+            Err(e) => {
+                let error_kind = e.kind();
+                let error_msg = if error_kind == std::io::ErrorKind::NotFound {
+                    format!(
+                        "hal-simplicity not found at: {}\n\nCommand: hal-simplicity simplicity info <program>\n\nTroubleshooting:\n1. Check if hal-simplicity is installed: which hal-simplicity\n2. Verify PATH: echo $PATH\n3. Common locations:\n   - /usr/local/bin/hal-simplicity\n   - /usr/bin/hal-simplicity\n   - ~/.cargo/bin/hal-simplicity\n4. Install hal-simplicity from: https://github.com/Blockstream/hal-simplicity\n\nOriginal error: {}",
+                        cmd, e
+                    )
+                } else {
+                    format!(
+                        "Failed to execute hal-simplicity\n\nCommand: hal-simplicity simplicity info <program>\n\nOriginal error: {}",
+                        e
+                    )
+                };
+                return Err(anyhow::anyhow!(error_msg));
+            }
+        };
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!(
-                "hal-simplicity info failed: {}",
-                stderr
-            ));
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let exit_code = output.status.code().unwrap_or(-1);
+            
+            let mut error_details = format!(
+                "hal-simplicity info failed with exit code {}\n\nCommand: hal-simplicity simplicity info <program>\nProgram (first 100 chars): {}\n\nStderr:\n{}\n\nStdout:\n{}",
+                exit_code, program_preview, stderr, stdout
+            );
+            
+            // Add troubleshooting
+            if stderr.contains("invalid") || stderr.contains("Invalid") {
+                error_details.push_str("\n\nInvalid program detected:\n");
+                error_details.push_str("1. Verify the program is valid base64\n");
+                error_details.push_str("2. Check that the program was compiled correctly\n");
+                error_details.push_str("3. Ensure the program is a valid Simplicity program\n");
+            } else if stderr.contains("parse") || stderr.contains("JSON") {
+                error_details.push_str("\n\nParse error detected:\n");
+                error_details.push_str("1. Check that hal-simplicity output is valid JSON\n");
+                error_details.push_str("2. Verify hal-simplicity version is compatible\n");
+            }
+            
+            return Err(anyhow::anyhow!(error_details));
         }
 
         String::from_utf8(output.stdout)
-            .context("Invalid UTF-8 in hal-simplicity output")
+            .context(format!("Invalid UTF-8 in hal-simplicity output\n\nCommand: hal-simplicity simplicity info <program>"))
     }
 
     /// Create transaction with witness
@@ -255,20 +411,75 @@ impl HalWrapper {
         cmd.arg("--outputs")
             .arg(outputs_str.join(","));
 
-        let output = cmd.output()
-            .context("Failed to execute hal-simplicity pset create")?;
+        let program_preview = if program_base64.len() > 100 {
+            format!("{}...", &program_base64[..100])
+        } else {
+            program_base64.to_string()
+        };
+        
+        let output = match cmd.output() {
+            Ok(o) => o,
+            Err(e) => {
+                let error_kind = e.kind();
+                let error_msg = if error_kind == std::io::ErrorKind::NotFound {
+                    format!(
+                        "hal-simplicity not found at: {}\n\nCommand: hal-simplicity simplicity pset create --program <program> --inputs <inputs> --outputs <outputs>\n\nTroubleshooting:\n1. Check if hal-simplicity is installed: which hal-simplicity\n2. Verify PATH: echo $PATH\n3. Install hal-simplicity from: https://github.com/Blockstream/hal-simplicity\n\nOriginal error: {}",
+                        self.hal_cmd(), e
+                    )
+                } else {
+                    format!(
+                        "Failed to execute hal-simplicity pset create\n\nCommand: hal-simplicity simplicity pset create --program <program> --inputs <inputs> --outputs <outputs>\n\nOriginal error: {}",
+                        e
+                    )
+                };
+                return Err(anyhow::anyhow!(error_msg));
+            }
+        };
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!(
-                "hal-simplicity pset create failed: {}",
-                stderr
-            ));
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let exit_code = output.status.code().unwrap_or(-1);
+            
+            let inputs_str: Vec<String> = inputs.iter().map(|(txid, vout)| format!("{}:{}", txid, vout)).collect();
+            let outputs_str: Vec<String> = outputs.iter().map(|(addr, amount)| format!("{}:{}", addr, amount)).collect();
+            
+            let mut error_details = format!(
+                "hal-simplicity pset create failed with exit code {}\n\nCommand: hal-simplicity simplicity pset create --program <program> --inputs {} --outputs {}\nProgram (first 100 chars): {}\n\nStderr:\n{}\n\nStdout:\n{}",
+                exit_code,
+                inputs_str.join(","),
+                outputs_str.join(","),
+                program_preview,
+                stderr,
+                stdout
+            );
+            
+            // Add troubleshooting
+            if stderr.contains("invalid") || stderr.contains("Invalid") {
+                error_details.push_str("\n\nInvalid input detected:\n");
+                error_details.push_str("1. Verify the program is valid base64\n");
+                error_details.push_str("2. Check that inputs are in format txid:vout\n");
+                error_details.push_str("3. Ensure outputs are in format address:amount\n");
+            } else if stderr.contains("parse") || stderr.contains("JSON") {
+                error_details.push_str("\n\nParse error detected:\n");
+                error_details.push_str("1. Check that hal-simplicity output is valid\n");
+                error_details.push_str("2. Verify hal-simplicity version is compatible\n");
+            }
+            
+            return Err(anyhow::anyhow!(error_details));
         }
 
-        String::from_utf8(output.stdout)
-            .context("Invalid UTF-8 in hal-simplicity output")
-            .map(|s| s.trim().to_string())
+        let stdout = String::from_utf8(output.stdout)
+            .context(format!("Invalid UTF-8 in hal-simplicity output\n\nCommand: hal-simplicity simplicity pset create"))?;
+        
+        let result = stdout.trim();
+        if result.is_empty() {
+            return Err(anyhow::anyhow!(
+                "hal-simplicity pset create returned empty output\n\nCommand: hal-simplicity simplicity pset create --program <program> --inputs <inputs> --outputs <outputs>"
+            ));
+        }
+        
+        Ok(result.to_string())
     }
 
     /// Add witness to a PSET
@@ -319,11 +530,36 @@ impl HalWrapper {
         cmr: &str,
         internal_key: &str,
     ) -> Result<String> {
+        // Trim whitespace and newlines from PSET (elements-cli might add them)
+        let pset_trimmed = pset_base64.trim();
+        
+        // Validate PSET is not empty
+        if pset_trimmed.is_empty() {
+            return Err(anyhow::anyhow!(
+                "PSET is empty\n\nCannot update empty PSET with Simplicity data"
+            ));
+        }
+        
+        // Basic validation: PSET should be base64-like (alphanumeric, +, /, =)
+        // Check for obviously invalid characters
+        let invalid_chars: Vec<char> = pset_trimmed
+            .chars()
+            .filter(|c| !c.is_alphanumeric() && *c != '+' && *c != '/' && *c != '=' && !c.is_whitespace())
+            .collect();
+        if !invalid_chars.is_empty() {
+            return Err(anyhow::anyhow!(
+                "PSET contains invalid characters for base64 encoding\n\nInvalid characters found: {:?}\nPSET length: {}\nPSET preview (first 200 chars): {}\n\nThis suggests the PSET format is incorrect",
+                invalid_chars,
+                pset_trimmed.len(),
+                pset_trimmed.chars().take(200).collect::<String>()
+            ));
+        }
+        
         let mut cmd = Command::new(&self.hal_cmd());
         cmd.arg("simplicity")
             .arg("pset")
             .arg("update-input")
-            .arg(pset_base64)
+            .arg(pset_trimmed)
             .arg(input_index.to_string())
             .arg("-i")
             .arg(format!("{}:{}:{}", script_pubkey, asset, value))
@@ -332,33 +568,106 @@ impl HalWrapper {
             .arg("-p")
             .arg(internal_key);
 
-        let output = cmd.output()
-            .context("Failed to execute hal-simplicity pset update-input")?;
+        let pset_preview = if pset_base64.len() > 100 {
+            format!("{}...", &pset_base64[..100])
+        } else {
+            pset_base64.to_string()
+        };
+        
+        let output = match cmd.output() {
+            Ok(o) => o,
+            Err(e) => {
+                let error_kind = e.kind();
+                let error_msg = if error_kind == std::io::ErrorKind::NotFound {
+                    format!(
+                        "hal-simplicity not found at: {}\n\nCommand: hal-simplicity simplicity pset update-input <pset> {} -i {}:{}:{} -c {} -p <internal_key>\n\nTroubleshooting:\n1. Check if hal-simplicity is installed: which hal-simplicity\n2. Verify PATH: echo $PATH\n3. Install hal-simplicity from: https://github.com/Blockstream/hal-simplicity\n\nOriginal error: {}",
+                        self.hal_cmd(), input_index, script_pubkey, asset, value, cmr, e
+                    )
+                } else {
+                    format!(
+                        "Failed to execute hal-simplicity pset update-input\n\nCommand: hal-simplicity simplicity pset update-input <pset> {} -i {}:{}:{} -c {} -p <internal_key>\n\nOriginal error: {}",
+                        input_index, script_pubkey, asset, value, cmr, e
+                    )
+                };
+                return Err(anyhow::anyhow!(error_msg));
+            }
+        };
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!(
-                "hal-simplicity pset update-input failed: {}",
-                stderr
-            ));
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let exit_code = output.status.code().unwrap_or(-1);
+            
+            let mut error_details = format!(
+                "hal-simplicity pset update-input failed with exit code {}\n\nCommand: hal-simplicity simplicity pset update-input <pset> {} -i {}:{}:{} -c {} -p <internal_key>\nPSET (first 100 chars): {}\n\nStderr:\n{}\n\nStdout:\n{}",
+                exit_code, input_index, script_pubkey, asset, value, cmr, pset_preview, stderr, stdout
+            );
+            
+            // Add troubleshooting
+            if stderr.contains("Deserialize error") || stderr.contains("decoding PSET") || stdout.contains("Deserialize error") {
+                error_details.push_str("\n\nPSET Deserialize Error detected:\n");
+                error_details.push_str("This error suggests hal-simplicity cannot decode the PSET format from elements-cli.\n\n");
+                error_details.push_str("Possible causes:\n");
+                error_details.push_str("1. Version incompatibility between elements-cli and hal-simplicity\n");
+                error_details.push_str("2. PSET format mismatch (elements-cli createpsbt might return PSBT, not PSET)\n");
+                error_details.push_str("3. The PSET might need to be converted or validated\n\n");
+                error_details.push_str("Troubleshooting steps:\n");
+                error_details.push_str("1. Check elements-cli version: elements-cli --version\n");
+                error_details.push_str("2. Check hal-simplicity version: hal-simplicity --version\n");
+                error_details.push_str("3. Try manually testing the PSET:\n");
+                error_details.push_str(&format!("   elements-cli createpsbt '[{{\"txid\":\"<txid>\",\"vout\":0}}]' '[{{\"<address>\":<amount>}}]' > test.pset\n"));
+                error_details.push_str("   hal-simplicity simplicity pset update-input $(cat test.pset) 0 -i <hex>:<asset>:<value> -c <cmr> -p <internal_key>\n");
+                error_details.push_str("4. Verify the PSET is valid base64: base64 -d test.pset > /dev/null 2>&1 && echo 'Valid base64'\n");
+                error_details.push_str(&format!("\nPSET details:\n- Length: {} chars\n- Preview (first 200 chars): {}\n- Last 50 chars: {}", 
+                    pset_trimmed.len(), 
+                    pset_trimmed.chars().take(200).collect::<String>(),
+                    pset_trimmed.chars().rev().take(50).collect::<String>().chars().rev().collect::<String>()));
+            } else if stderr.contains("invalid") || stderr.contains("Invalid") {
+                error_details.push_str("\n\nInvalid input detected:\n");
+                error_details.push_str("1. Verify the PSET is valid base64\n");
+                error_details.push_str("2. Check that scriptPubKey, asset, and value are correct\n");
+                error_details.push_str("3. Ensure CMR matches the contract\n");
+                error_details.push_str("4. Verify internal key is correct\n");
+            } else if stderr.contains("parse") || stderr.contains("JSON") {
+                error_details.push_str("\n\nParse error detected:\n");
+                error_details.push_str("1. Check that hal-simplicity output is valid JSON\n");
+                error_details.push_str("2. Verify hal-simplicity version is compatible\n");
+            }
+            
+            return Err(anyhow::anyhow!(error_details));
         }
 
         let stdout = String::from_utf8(output.stdout)
-            .context("Invalid UTF-8 in hal-simplicity output")?;
+            .context(format!("Invalid UTF-8 in hal-simplicity output\n\nCommand: hal-simplicity simplicity pset update-input"))?;
 
         // Parse JSON response to extract pset field
-        let json: serde_json::Value = serde_json::from_str(&stdout)
-            .context("Failed to parse hal-simplicity JSON response")?;
+        let json: serde_json::Value = match serde_json::from_str(&stdout) {
+            Ok(j) => j,
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to parse hal-simplicity JSON response: {}\n\nCommand: hal-simplicity simplicity pset update-input\n\nRaw stdout:\n{}\n\nExpected JSON with 'pset' field",
+                    e,
+                    stdout.chars().take(500).collect::<String>()
+                ));
+            }
+        };
         
-        json.get("pset")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .ok_or_else(|| anyhow::anyhow!("No pset field in response"))
+        match json.get("pset").and_then(|v| v.as_str()) {
+            Some(pset) => Ok(pset.to_string()),
+            None => {
+                Err(anyhow::anyhow!(
+                    "No 'pset' field in response\n\nCommand: hal-simplicity simplicity pset update-input\n\nFull JSON response:\n{}\n\nAvailable fields: {:?}",
+                    serde_json::to_string_pretty(&json).unwrap_or_else(|_| "Failed to serialize".to_string()),
+                    json.as_object().map(|o| o.keys().collect::<Vec<_>>()).unwrap_or_default()
+                ))
+            }
+        }
     }
 
     /// Calculate sighash and sign
     /// 
     /// Runs: hal-simplicity simplicity sighash <pset> <input_index> <cmr> -x <privkey>
+    /// This matches the script: hal-simplicity simplicity sighash "$PSET" 0 "$CMR" -x "$PRIVKEY_1"
     /// Returns: Signature hex string
     pub fn sighash_and_sign(
         &self,
@@ -376,28 +685,61 @@ impl HalWrapper {
             .arg("-x")
             .arg(privkey);
 
+        // Note: The command structure matches the script exactly:
+        // hal-simplicity simplicity sighash "$PSET" 0 "$CMR" -x "$PRIVKEY_1"
+        // This uses SIGHASH_ALL (sig_all_hash) as defined in the Simplicity contract
+
         let output = cmd.output()
-            .context("Failed to execute hal-simplicity sighash")?;
+            .context(format!("Failed to execute hal-simplicity sighash\n\nCommand: {} simplicity sighash <pset> {} {} -x <privkey>", 
+                self.hal_cmd(), input_index, cmr))?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(anyhow::anyhow!(
-                "hal-simplicity sighash failed: {}",
+                "hal-simplicity sighash failed with exit code {}\n\nCommand: hal-simplicity simplicity sighash <pset> {} {} -x <privkey>\n\nStdout:\n{}\n\nStderr:\n{}",
+                output.status.code().unwrap_or(-1),
+                input_index,
+                cmr,
+                stdout,
                 stderr
             ));
         }
 
-        let stdout = String::from_utf8(output.stdout)
-            .context("Invalid UTF-8 in hal-simplicity output")?;
-
         // Parse JSON response to extract signature field
-        let json: serde_json::Value = serde_json::from_str(&stdout)
-            .context("Failed to parse hal-simplicity JSON response")?;
+        let json: serde_json::Value = match serde_json::from_str(&stdout) {
+            Ok(j) => j,
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to parse hal-simplicity JSON response: {}\n\nRaw stdout:\n{}\n\nStderr:\n{}",
+                    e,
+                    stdout,
+                    stderr
+                ));
+            }
+        };
         
-        json.get("signature")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .ok_or_else(|| anyhow::anyhow!("No signature field in response"))
+        match json.get("signature") {
+            Some(v) => {
+                match v.as_str() {
+                    Some(s) => Ok(s.to_string()),
+                    None => Err(anyhow::anyhow!(
+                        "Signature field is not a string in response\n\nFull JSON response:\n{}\n\nStdout:\n{}\n\nStderr:\n{}",
+                        serde_json::to_string_pretty(&json).unwrap_or_else(|_| "Failed to serialize".to_string()),
+                        stdout,
+                        stderr
+                    ))
+                }
+            }
+            None => Err(anyhow::anyhow!(
+                "No 'signature' field found in response\n\nFull JSON response:\n{}\n\nStdout:\n{}\n\nStderr:\n{}\n\nAvailable fields: {:?}",
+                serde_json::to_string_pretty(&json).unwrap_or_else(|_| "Failed to serialize".to_string()),
+                stdout,
+                stderr,
+                json.as_object().map(|o| o.keys().collect::<Vec<_>>()).unwrap_or_default()
+            ))
+        }
     }
 
     /// Finalize PSET with Simplicity program and witness
@@ -420,28 +762,92 @@ impl HalWrapper {
             .arg(program)
             .arg(witness);
 
-        let output = cmd.output()
-            .context("Failed to execute hal-simplicity pset finalize")?;
+        let pset_preview = if pset_base64.len() > 100 {
+            format!("{}...", &pset_base64[..100])
+        } else {
+            pset_base64.to_string()
+        };
+        let program_preview = if program.len() > 100 {
+            format!("{}...", &program[..100])
+        } else {
+            program.to_string()
+        };
+        
+        let output = match cmd.output() {
+            Ok(o) => o,
+            Err(e) => {
+                let error_kind = e.kind();
+                let error_msg = if error_kind == std::io::ErrorKind::NotFound {
+                    format!(
+                        "hal-simplicity not found at: {}\n\nCommand: hal-simplicity simplicity pset finalize <pset> {} <program> <witness>\n\nTroubleshooting:\n1. Check if hal-simplicity is installed: which hal-simplicity\n2. Verify PATH: echo $PATH\n3. Install hal-simplicity from: https://github.com/Blockstream/hal-simplicity\n\nOriginal error: {}",
+                        self.hal_cmd(), input_index, e
+                    )
+                } else {
+                    format!(
+                        "Failed to execute hal-simplicity pset finalize\n\nCommand: hal-simplicity simplicity pset finalize <pset> {} <program> <witness>\n\nOriginal error: {}",
+                        input_index, e
+                    )
+                };
+                return Err(anyhow::anyhow!(error_msg));
+            }
+        };
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!(
-                "hal-simplicity pset finalize failed: {}",
-                stderr
-            ));
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let exit_code = output.status.code().unwrap_or(-1);
+            
+            let mut error_details = format!(
+                "hal-simplicity pset finalize failed with exit code {}\n\nCommand: hal-simplicity simplicity pset finalize <pset> {} <program> <witness>\nPSET (first 100 chars): {}\nProgram (first 100 chars): {}\n\nStderr:\n{}\n\nStdout:\n{}",
+                exit_code, input_index, pset_preview, program_preview, stderr, stdout
+            );
+            
+            // Add troubleshooting
+            if stderr.contains("invalid") || stderr.contains("Invalid") {
+                error_details.push_str("\n\nInvalid input detected:\n");
+                error_details.push_str("1. Verify the PSET is valid and properly updated\n");
+                error_details.push_str("2. Check that the program and witness are valid base64\n");
+                error_details.push_str("3. Ensure all signatures are present in the witness\n");
+                error_details.push_str("4. Verify the program matches the contract CMR\n");
+            } else if stderr.contains("witness") || stderr.contains("signature") {
+                error_details.push_str("\n\nWitness/Signature error detected:\n");
+                error_details.push_str("1. Check that all required signatures are present\n");
+                error_details.push_str("2. Verify signatures are correctly formatted\n");
+                error_details.push_str("3. Ensure witness file matches the contract requirements\n");
+            } else if stderr.contains("parse") || stderr.contains("JSON") {
+                error_details.push_str("\n\nParse error detected:\n");
+                error_details.push_str("1. Check that hal-simplicity output is valid JSON\n");
+                error_details.push_str("2. Verify hal-simplicity version is compatible\n");
+            }
+            
+            return Err(anyhow::anyhow!(error_details));
         }
 
         let stdout = String::from_utf8(output.stdout)
-            .context("Invalid UTF-8 in hal-simplicity output")?;
+            .context(format!("Invalid UTF-8 in hal-simplicity output\n\nCommand: hal-simplicity simplicity pset finalize"))?;
 
         // Parse JSON response to extract pset field
-        let json: serde_json::Value = serde_json::from_str(&stdout)
-            .context("Failed to parse hal-simplicity JSON response")?;
+        let json: serde_json::Value = match serde_json::from_str(&stdout) {
+            Ok(j) => j,
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to parse hal-simplicity JSON response: {}\n\nCommand: hal-simplicity simplicity pset finalize\n\nRaw stdout:\n{}\n\nExpected JSON with 'pset' field",
+                    e,
+                    stdout.chars().take(500).collect::<String>()
+                ));
+            }
+        };
         
-        json.get("pset")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .ok_or_else(|| anyhow::anyhow!("No pset field in response"))
+        match json.get("pset").and_then(|v| v.as_str()) {
+            Some(pset) => Ok(pset.to_string()),
+            None => {
+                Err(anyhow::anyhow!(
+                    "No 'pset' field in response\n\nCommand: hal-simplicity simplicity pset finalize\n\nFull JSON response:\n{}\n\nAvailable fields: {:?}",
+                    serde_json::to_string_pretty(&json).unwrap_or_else(|_| "Failed to serialize".to_string()),
+                    json.as_object().map(|o| o.keys().collect::<Vec<_>>()).unwrap_or_default()
+                ))
+            }
+        }
     }
 }
 

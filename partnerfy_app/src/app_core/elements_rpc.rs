@@ -7,6 +7,7 @@ use crate::app_core::models::Settings;
 use anyhow::{Result, Context};
 use serde_json::{json, Value};
 use tokio::process::Command;
+use reqwest;
 
 /// Elements RPC client wrapper using direct JSON-RPC
 pub struct ElementsRPC {
@@ -41,7 +42,7 @@ impl ElementsRPC {
             
             // Try common locations for both names
             let home = std::env::var("HOME").unwrap_or_default();
-            let common_paths = [
+            let mut common_paths = vec![
                 format!("/usr/local/bin/{}", cmd_name),
                 format!("/usr/bin/{}", cmd_name),
                 format!("/opt/elements/bin/{}", cmd_name),
@@ -49,6 +50,11 @@ impl ElementsRPC {
                 format!("{}/bin/{}", home, cmd_name),
                 format!("/opt/homebrew/bin/{}", cmd_name), // macOS Homebrew
             ];
+            
+            // Also check common build locations (like ~/elements/src/elements-cli)
+            common_paths.push(format!("{}/elements/src/{}", home, cmd_name));
+            common_paths.push(format!("{}/elements/target/release/{}", home, cmd_name));
+            common_paths.push(format!("{}/elements/target/debug/{}", home, cmd_name));
             
             for path in &common_paths {
                 if std::path::Path::new(path).exists() {
@@ -182,11 +188,59 @@ impl ElementsRPC {
     }
 
     /// Send raw transaction
+    /// Tries RPC first, then falls back to Blockstream API (like the script does)
     pub async fn send_raw_transaction(&self, hex: &str) -> Result<String> {
-        let result = self.call("sendrawtransaction", json!([hex])).await?;
-        result.as_str()
-            .map(|s| s.to_string())
-            .ok_or_else(|| anyhow::anyhow!("Invalid txid format"))
+        // First try RPC
+        match self.call("sendrawtransaction", json!([hex])).await {
+            Ok(result) => {
+                if let Some(txid) = result.as_str() {
+                    return Ok(txid.to_string());
+                }
+            }
+            Err(e) => {
+                // If RPC fails, try Blockstream API as fallback (like the script does)
+                // Script uses: curl -X POST "https://blockstream.info/liquidtestnet/api/tx" -d "$RAW_TX"
+                let client = reqwest::Client::new();
+                match client
+                    .post("https://blockstream.info/liquidtestnet/api/tx")
+                    .body(hex.to_string())
+                    .send()
+                    .await
+                {
+                    Ok(response) => {
+                        if response.status().is_success() {
+                            match response.text().await {
+                                Ok(txid) => {
+                                    // Blockstream API returns just the txid as text
+                                    return Ok(txid.trim().to_string());
+                                }
+                                Err(e) => {
+                                    return Err(anyhow::anyhow!(
+                                        "RPC failed and Blockstream API response parse failed: {}\n\nOriginal RPC error: {}",
+                                        e, e
+                                    ));
+                                }
+                            }
+                        } else {
+                            let status = response.status();
+                            let error_text = response.text().await.unwrap_or_default();
+                            return Err(anyhow::anyhow!(
+                                "RPC failed and Blockstream API returned error status {}: {}\n\nOriginal RPC error: {}",
+                                status, error_text, e
+                            ));
+                        }
+                    }
+                    Err(api_err) => {
+                        return Err(anyhow::anyhow!(
+                            "RPC failed and Blockstream API request failed: {}\n\nOriginal RPC error: {}",
+                            api_err, e
+                        ));
+                    }
+                }
+            }
+        }
+        
+        Err(anyhow::anyhow!("Failed to send transaction via both RPC and Blockstream API"))
     }
 
     /// Get transaction details
@@ -213,10 +267,12 @@ impl ElementsRPC {
     /// 
     /// Inputs: Array of objects with "txid" and "vout"
     /// Outputs: Array of objects with "address": amount pairs
+    /// Fee: Optional fee amount (if provided, adds {"fee": amount} to outputs)
     pub async fn create_pset(
         &self,
         inputs: &[(String, u32)],
         outputs: &[(String, f64)],
+        fee: Option<f64>,
     ) -> Result<String> {
         // Format inputs as JSON array string
         let inputs_json: Vec<Value> = inputs
@@ -233,7 +289,8 @@ impl ElementsRPC {
 
         // Format outputs as JSON array string
         // Format: [{"address_string": amount}, ...]
-        let outputs_json: Vec<Value> = outputs
+        // If fee is provided, add {"fee": amount} as the last output (like the script does)
+        let mut outputs_json: Vec<Value> = outputs
             .iter()
             .map(|(addr, amount)| {
                 let mut output_obj = serde_json::Map::new();
@@ -241,6 +298,14 @@ impl ElementsRPC {
                 json!(output_obj)
             })
             .collect();
+        
+        // Add fee output if specified (matches script: { "fee": 0.00000100 })
+        if let Some(fee_amount) = fee {
+            let mut fee_obj = serde_json::Map::new();
+            fee_obj.insert("fee".to_string(), json!(fee_amount));
+            outputs_json.push(json!(fee_obj));
+        }
+        
         let outputs_str = serde_json::to_string(&outputs_json)
             .context("Failed to serialize outputs")?;
 
@@ -318,6 +383,16 @@ impl ElementsRPC {
                 inputs_str,
                 outputs_str,
                 stderr
+            ));
+        }
+        
+        // Validate PSET looks like base64 (basic check)
+        if result.len() < 10 {
+            return Err(anyhow::anyhow!(
+                "elements-cli createpsbt returned suspiciously short output\n\nCommand: elements-cli createpsbt\nInputs: {}\nOutputs: {}\n\nOutput: {}\n\nThis doesn't look like a valid PSET",
+                inputs_str,
+                outputs_str,
+                result
             ));
         }
         
@@ -445,21 +520,31 @@ impl ElementsRPC {
         }
 
         let stdout = String::from_utf8(output.stdout)
-            .context("Invalid UTF-8 in elements-cli output")?;
+            .context(format!("Invalid UTF-8 in elements-cli output\n\nCommand: {} finalizepsbt", cmd))?;
         
         // Parse JSON response to extract hex
-        let json: Value = serde_json::from_str(&stdout)
-            .context("Failed to parse finalizepsbt JSON response")?;
+        let json: Value = match serde_json::from_str(&stdout) {
+            Ok(j) => j,
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to parse finalizepsbt JSON response: {}\n\nCommand: {} finalizepsbt\n\nRaw stdout:\n{}\n\nExpected JSON with 'hex' field",
+                    e, cmd, stdout.chars().take(500).collect::<String>()
+                ));
+            }
+        };
         
-        if let Some(hex) = json.get("hex").and_then(|v| v.as_str()) {
-            Ok(hex.to_string())
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            Err(anyhow::anyhow!(
-                "PSET finalization failed or incomplete - no 'hex' field in response\n\nResponse JSON:\n{}\n\nStderr:\n{}",
-                serde_json::to_string_pretty(&json).unwrap_or_else(|_| stdout),
-                stderr
-            ))
+        match json.get("hex").and_then(|v| v.as_str()) {
+            Some(hex) => Ok(hex.to_string()),
+            None => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Err(anyhow::anyhow!(
+                    "PSET finalization failed or incomplete - no 'hex' field in response\n\nCommand: {} finalizepsbt\n\nResponse JSON:\n{}\n\nStderr:\n{}\n\nAvailable fields: {:?}",
+                    cmd,
+                    serde_json::to_string_pretty(&json).unwrap_or_else(|_| stdout),
+                    stderr,
+                    json.as_object().map(|o| o.keys().collect::<Vec<_>>()).unwrap_or_default()
+                ))
+            }
         }
     }
 
@@ -525,10 +610,17 @@ impl ElementsRPC {
         }
 
         let stdout = String::from_utf8(output.stdout)
-            .context("Invalid UTF-8 in elements-cli output")?;
+            .context(format!("Invalid UTF-8 in elements-cli output\n\nCommand: {} gettxout {} {}", cmd, txid, vout))?;
         
-        serde_json::from_str(&stdout)
-            .context("Failed to parse gettxout JSON response")
+        match serde_json::from_str(&stdout) {
+            Ok(json) => Ok(json),
+            Err(e) => {
+                Err(anyhow::anyhow!(
+                    "Failed to parse gettxout JSON response: {}\n\nCommand: {} gettxout {} {}\n\nRaw stdout:\n{}\n\nExpected JSON response",
+                    e, cmd, txid, vout, stdout.chars().take(500).collect::<String>()
+                ))
+            }
+        }
     }
 
     /// Get settings reference
