@@ -278,34 +278,8 @@ pub fn P2MS() -> Element {
                     return;
                 }
                 
-                // Step 1: Create base PSET using elements-cli createpsbt (matching the bash script)
-                // The script uses: elements-cli createpsbt '[ { "txid": "...", "vout": 0 } ]' '[ { "address": amount }, { "fee": fee_amount } ]'
-                status_message.set("Creating base PSET with elements-cli...".to_string());
-                
-                let inputs = vec![(txid.clone(), vout)];
-                // Calculate fee: script uses 0.00000100 fee
-                let fee_amount = 0.00000100;
-                // Calculate output amount (total - fee, matching script: 0.00099900 = 0.001 - 0.00000100)
-                let output_amount = amount - fee_amount;
-                if output_amount <= 0.0 {
-                    status_message.set(format!("Amount {} is too small. Must be greater than fee {}.", amount, fee_amount));
-                    is_loading.set(false);
-                    return;
-                }
-                
-                let outputs = vec![(destination.clone(), output_amount)];
-                
-                // Create base PSET using elements-cli (matching script workflow)
-                let base_pset = match rpc_context.create_pset(&inputs, &outputs, Some(fee_amount)).await {
-                    Ok(pset) => pset,
-                    Err(e) => {
-                        status_message.set(format!("Failed to create base PSET with elements-cli: {}\n\nThis creates the initial PSET that will be updated with Simplicity data.", e));
-                        is_loading.set(false);
-                        return;
-                    }
-                };
-                
-                // Step 2: Wait for UTXO to be available (like the script does)
+                // Step 1: Wait for UTXO to be available and get its value FIRST
+                // We need the UTXO value to calculate correct outputs and fees
                 // Script: while ! $ELEMENTS_CLI gettxout $FAUCET_TRANSACTION 0 | grep . >/dev/null; do sleep 5; done
                 status_message.set("Waiting for UTXO to be available...".to_string());
                 let mut utxo_data: Option<serde_json::Value> = None;
@@ -388,6 +362,74 @@ pub fn P2MS() -> Element {
                     is_loading.set(false);
                     return;
                 }
+                
+                // Convert UTXO value from sats to BTC for display
+                let utxo_value_btc = value_sats as f64 / 100_000_000.0;
+                
+                // Convert user's spend amount from BTC to sats (using integer arithmetic to avoid precision errors)
+                // Round to nearest sat to avoid floating point issues
+                let amount_sats = (amount * 100_000_000.0).round() as u64;
+                
+                // Validate that the user's spend amount doesn't exceed the UTXO value
+                if amount_sats > value_sats {
+                    status_message.set(format!(
+                        "Spend amount {} L-BTC ({} sats) exceeds available UTXO value {} L-BTC ({} sats).\n\nPlease enter an amount less than or equal to the funded amount.",
+                        amount, amount_sats, utxo_value_btc, value_sats
+                    ));
+                    is_loading.set(false);
+                    return;
+                }
+                
+                // Step 2: Create base PSET using elements-cli createpsbt (matching the bash script)
+                // The script uses: elements-cli createpsbt '[ { "txid": "...", "vout": 0 } ]' '[ { "address": amount }, { "fee": fee_amount } ]'
+                // Calculate fee in sats (using integer arithmetic to avoid precision errors)
+                let fee_sats = value_sats - amount_sats;
+                
+                // Validate fee is reasonable (not negative, not too small)
+                if fee_sats == 0 {
+                    status_message.set(format!(
+                        "Fee is zero. You cannot spend the entire UTXO value without leaving room for fees.\n\nUTXO value: {} L-BTC ({} sats)\nSpend amount: {} L-BTC ({} sats)\n\nPlease reduce the spend amount to allow for a fee.",
+                        utxo_value_btc, value_sats, amount, amount_sats
+                    ));
+                    is_loading.set(false);
+                    return;
+                }
+                
+                // Minimum fee: 100 sats (0.00000100 L-BTC)
+                const MIN_FEE_SATS: u64 = 100;
+                if fee_sats < MIN_FEE_SATS {
+                    status_message.set(format!(
+                        "Fee {} sats ({} L-BTC) is too small (minimum recommended: {} sats / 0.00000100 L-BTC).\n\nUTXO value: {} L-BTC ({} sats)\nSpend amount: {} L-BTC ({} sats)\nCalculated fee: {} sats ({} L-BTC)\n\nPlease reduce the spend amount to allow for a reasonable fee.",
+                        fee_sats, fee_sats as f64 / 100_000_000.0, MIN_FEE_SATS,
+                        utxo_value_btc, value_sats, amount, amount_sats, fee_sats, fee_sats as f64 / 100_000_000.0
+                    ));
+                    is_loading.set(false);
+                    return;
+                }
+                
+                // Convert back to BTC for API calls, using proper rounding to 8 decimal places
+                // Round to avoid floating point precision issues (Bitcoin uses 8 decimal places max)
+                let amount_btc = (amount_sats as f64 / 100_000_000.0 * 100_000_000.0).round() / 100_000_000.0;
+                let fee_btc = (fee_sats as f64 / 100_000_000.0 * 100_000_000.0).round() / 100_000_000.0;
+                
+                status_message.set(format!(
+                    "Creating base PSET with:\nUTXO value: {} L-BTC ({} sats)\nSpend amount: {} L-BTC ({} sats)\nFee: {} L-BTC ({} sats)",
+                    utxo_value_btc, value_sats, amount_btc, amount_sats, fee_btc, fee_sats
+                ));
+                
+                let inputs = vec![(txid.clone(), vout)];
+                let outputs = vec![(destination.clone(), amount_btc)];
+                
+                // Create base PSET using elements-cli (matching script workflow)
+                // Use the properly calculated fee_btc to avoid floating point precision errors
+                let base_pset = match rpc_context.create_pset(&inputs, &outputs, Some(fee_btc)).await {
+                    Ok(pset) => pset,
+                    Err(e) => {
+                        status_message.set(format!("Failed to create base PSET with elements-cli: {}\n\nThis creates the initial PSET that will be updated with Simplicity data.", e));
+                        is_loading.set(false);
+                        return;
+                    }
+                };
                 
                 // Step 3: Update PSET with Simplicity data using hal-simplicity
                 // Script: hal-simplicity simplicity pset update-input $PSET 0 -i $HEX:$ASSET:$VALUE -c $CMR -p "$INTERNAL_KEY"
