@@ -324,8 +324,72 @@ impl ElementsRPC {
         Ok(result.to_string())
     }
 
+    /// Update PSBT with UTXO data from the blockchain
+    /// Uses elements-cli utxoupdatepsbt
+    /// Syntax: utxoupdatepsbt "psbt" ( ["",{"desc":"str","range":n or [n,n]},...] )
+    pub async fn update_psbt_utxo(&self, psbt: &str) -> Result<String> {
+        let cmd = self.elements_cli_cmd();
+        let output = match Command::new(&cmd)
+            .arg("utxoupdatepsbt")
+            .arg(psbt)
+            .output()
+            .await
+        {
+            Ok(o) => o,
+            Err(e) => {
+                let error_kind = e.kind();
+                let error_msg = if error_kind == std::io::ErrorKind::NotFound {
+                    format!(
+                        "elements-cli command not found at: {}\n\nTroubleshooting:\n1. Check if elements-cli is installed: which elements-cli\n2. Try finding it: find /usr /opt ~/.cargo -name 'elements-cli' 2>/dev/null\n\nOriginal error: {}",
+                        cmd, e
+                    )
+                } else {
+                    format!(
+                        "Failed to execute {} utxoupdatepsbt: {}\n\nOriginal error: {}",
+                        cmd, e, e
+                    )
+                };
+                return Err(anyhow::anyhow!(error_msg));
+            }
+        };
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let exit_code = output.status.code().unwrap_or(-1);
+            
+            let mut error_details = format!(
+                "{} utxoupdatepsbt failed with exit code {}\n\nCommand: {} utxoupdatepsbt\nPSBT (first 200 chars): {}...\n\nStderr:\n{}\n\nStdout:\n{}",
+                cmd,
+                exit_code,
+                cmd,
+                psbt.chars().take(200).collect::<String>(),
+                stderr,
+                stdout
+            );
+            
+            if stderr.contains("error code: -1") || stderr.contains("error message:") {
+                error_details.push_str("\n\nRPC error detected:\n");
+                error_details.push_str("1. Make sure elementsd is running: elements-cli getblockchaininfo\n");
+                error_details.push_str("2. Check RPC credentials in ~/.elements/elements.conf\n");
+            } else if stderr.contains("Invalid") || stderr.contains("invalid") {
+                error_details.push_str("\n\nInvalid PSBT detected:\n");
+                error_details.push_str("1. Verify the PSBT format is correct (base64)\n");
+                error_details.push_str("2. Make sure the PSBT hasn't been corrupted\n");
+            }
+            
+            return Err(anyhow::anyhow!(error_details));
+        }
+
+        let stdout = String::from_utf8(output.stdout)
+            .context("Invalid UTF-8 in elements-cli output")?;
+        
+        Ok(stdout.trim().to_string())
+    }
+
     /// Finalize a PSET to get the raw transaction hex
     /// Uses elements-cli finalizepsbt directly (like simc)
+    /// Syntax: finalizepsbt "psbt" ( extract )
     pub async fn finalize_pset(&self, pset: &str) -> Result<String> {
         // Call elements-cli finalizepsbt directly
         let cmd = self.elements_cli_cmd();

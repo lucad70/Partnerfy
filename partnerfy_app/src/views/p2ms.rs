@@ -331,29 +331,21 @@ pub fn P2MS() -> Element {
                     return;
                 }
                 
-                // Step 3: Update PSET with Simplicity data
-                status_message.set("Updating PSET with Simplicity data...".to_string());
-                // Internal key (NUMS point - unspendable)
-                let internal_key = "50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0";
+                // Step 3: Update PSBT with UTXO data using elements-cli
+                status_message.set("Updating PSBT with UTXO data...".to_string());
                 
-                match hal_context.update_pset_input(
-                    &base_pset,
-                    0,
-                    script_pubkey,
-                    asset,
-                    &format!("{:.8}", value),
-                    &cmr,
-                    internal_key,
-                ) {
-                    Ok(updated_pset) => {
-                        pset_for_signing.set(updated_pset.clone());
+                match rpc_context.update_psbt_utxo(&base_pset).await {
+                    Ok(updated_psbt) => {
+                        pset_for_signing.set(updated_psbt.clone());
                         status_message.set(format!(
-                            "PSET created successfully!\n\nYou can now export this PSET for signing.\n\nPSET (first 200 chars): {}...",
-                            updated_pset.chars().take(200).collect::<String>()
+                            "PSBT created and updated successfully!\n\nYou can now export this PSBT for signing.\n\nPSBT (first 200 chars): {}...",
+                            updated_psbt.chars().take(200).collect::<String>()
                         ));
                     }
                     Err(e) => {
-                        status_message.set(format!("Failed to update PSET: {}", e));
+                        status_message.set(format!("Failed to update PSBT: {}\n\nUsing base PSBT without UTXO update...", e));
+                        // Fallback: use base PSBT even if UTXO update fails
+                        pset_for_signing.set(base_pset.clone());
                     }
                 }
                 
