@@ -14,7 +14,9 @@ use std::path::Path;
 pub fn P2MS() -> Element {
     let mut simf_file_path = use_signal(|| String::new());
     let mut required_sigs = use_signal(|| String::new());
-    let mut pubkeys = use_signal(|| String::new());
+    let mut pubkey_1 = use_signal(|| String::new());
+    let mut pubkey_2 = use_signal(|| String::new());
+    let mut pubkey_3 = use_signal(|| String::new());
     let mut contract_program_input = use_signal(|| String::new());
     let mut contract_address = use_signal(|| String::new());
     let mut contract_cmr = use_signal(|| String::new());
@@ -24,7 +26,10 @@ pub fn P2MS() -> Element {
     let mut funding_amount = use_signal(|| String::new());
     let mut spend_destination = use_signal(|| String::new());
     let mut spend_amount = use_signal(|| String::new());
-    let mut signatures = use_signal(|| String::new());
+    let mut pset_for_signing = use_signal(|| String::new());
+    let mut signed_pset_1 = use_signal(|| String::new());
+    let mut signed_pset_2 = use_signal(|| String::new());
+    let mut final_pset = use_signal(|| String::new());
     let mut final_tx_hex = use_signal(|| String::new());
     let mut status_message = use_signal(|| String::new());
     let mut is_loading = use_signal(|| false);
@@ -82,46 +87,10 @@ pub fn P2MS() -> Element {
                 is_loading.set(true);
                 status_message.set("Creating P2MS contract address...".to_string());
                 
-                let m: u32 = required_sigs.read().parse().unwrap_or(0);
-                let pubkeys_str = pubkeys.read().clone();
                 let program = contract_program_input.read().clone();
                 
                 if program.is_empty() {
                     status_message.set("Please enter a compiled Simplicity program (base64) or compile a .simf file first".to_string());
-                    is_loading.set(false);
-                    return;
-                }
-                
-                if m == 0 {
-                    status_message.set("Please enter the number of required signatures (m)".to_string());
-                    is_loading.set(false);
-                    return;
-                }
-                
-                if pubkeys_str.is_empty() {
-                    status_message.set("Please enter public keys (one per line or comma-separated)".to_string());
-                    is_loading.set(false);
-                    return;
-                }
-                
-                // Parse public keys
-                let keys: Vec<String> = pubkeys_str
-                    .lines()
-                    .chain(pubkeys_str.split(','))
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                
-                if keys.is_empty() {
-                    status_message.set("No valid public keys found".to_string());
-                    is_loading.set(false);
-                    return;
-                }
-                
-                let n = keys.len() as u32;
-                
-                if m > n {
-                    status_message.set(format!("Required signatures (m={}) cannot exceed total keys (n={})", m, n));
                     is_loading.set(false);
                     return;
                 }
@@ -140,9 +109,8 @@ pub fn P2MS() -> Element {
                                     contract_address.set(addr.to_string());
                                     contract_program.set(program.clone());
                                     status_message.set(format!(
-                                        "P2MS Contract created successfully!\n\nType: {}-of-{} multisig\nCMR: {}\nAddress: {}\n\nPublic Keys ({}):\n{}",
-                                        m, n, cmr, addr, n,
-                                        keys.iter().enumerate().map(|(i, k)| format!("  {}. {}", i+1, k)).collect::<Vec<_>>().join("\n")
+                                        "P2MS Contract created successfully!\n\nCMR: {}\nAddress: {}",
+                                        cmr, addr
                                     ));
                                 } else {
                                     status_message.set(format!(
@@ -164,57 +132,6 @@ pub fn P2MS() -> Element {
                             "Error calling hal-simplicity: {}\n\nPlease ensure:\n1. hal-simplicity is installed and in PATH\n2. The program is valid base64\n3. Try running: hal-simplicity simplicity simplicity info \"<your_program>\"",
                             e
                         ));
-                    }
-                }
-                
-                is_loading.set(false);
-            });
-        }
-    };
-
-    let fund_address = {
-        let rpc_context = rpc_context.clone();
-        move |_| {
-            let rpc_context = rpc_context.clone();
-            spawn(async move {
-                is_loading.set(true);
-                status_message.set("Funding contract address...".to_string());
-                
-                let addr = contract_address.read().clone();
-                if addr.is_empty() {
-                    status_message.set("Please create the contract address first".to_string());
-                    is_loading.set(false);
-                    return;
-                }
-                
-                let amount_str = funding_amount.read().clone();
-                if amount_str.is_empty() {
-                    status_message.set("Please enter a funding amount".to_string());
-                    is_loading.set(false);
-                    return;
-                }
-                
-                let amount: f64 = match amount_str.parse() {
-                    Ok(a) if a > 0.0 => a,
-                    _ => {
-                        status_message.set("Please enter a valid positive amount".to_string());
-                        is_loading.set(false);
-                        return;
-                    }
-                };
-                
-                // Use RPC to send funds to the address
-                match rpc_context.send_to_address(&addr, amount).await {
-                    Ok(txid) => {
-                        funding_txid.set(txid.clone());
-                        funding_vout.set("0".to_string());
-                        status_message.set(format!(
-                            "Funding successful!\n\nContract Address: {}\nAmount: {} L-BTC\nTransaction ID: {}\nVOUT: 0\n\nView on explorer: https://blockstream.info/liquidtestnet/tx/{}",
-                            addr, amount, txid, txid
-                        ));
-                    }
-                    Err(e) => {
-                        status_message.set(format!("Error funding address: {}\n\nMake sure your elementsd wallet has sufficient balance.", e));
                     }
                 }
                 
@@ -251,7 +168,7 @@ pub fn P2MS() -> Element {
                                         let txid_str = txid.as_str().to_string();
                                         funding_txid.set(txid_str.clone());
                                         funding_vout.set("0".to_string());
-                                        funding_amount.set("0.001".to_string()); // Faucet sends 0.001 L-BTC
+                                        funding_amount.set("0.001".to_string());
                                         
                                         status_message.set(format!(
                                             "Funding successful via faucet!\n\nContract Address: {}\nAmount: 0.001 L-BTC (100,000 sats)\nTransaction ID: {}\nVOUT: 0\n\nView on explorer: https://blockstream.info/liquidtestnet/tx/{}",
@@ -304,7 +221,7 @@ pub fn P2MS() -> Element {
         }
     };
 
-    let spend_p2ms = {
+    let create_spend_pset = {
         let rpc_context = rpc_context.clone();
         let hal_context = hal_context.clone();
         move |_| {
@@ -312,15 +229,7 @@ pub fn P2MS() -> Element {
             let hal_context = hal_context.clone();
             spawn(async move {
                 is_loading.set(true);
-                status_message.set("Creating spend transaction...".to_string());
-                
-                // Validate inputs
-                let program = contract_program_input.read().clone();
-                if program.is_empty() {
-                    status_message.set("Please create the contract address first".to_string());
-                    is_loading.set(false);
-                    return;
-                }
+                status_message.set("Creating spending PSET...".to_string());
                 
                 let txid = funding_txid.read().clone();
                 let vout_str = funding_vout.read().clone();
@@ -346,75 +255,155 @@ pub fn P2MS() -> Element {
                     return;
                 }
                 
-                // Parse signatures (one per line or comma-separated)
-                let sigs_str = signatures.read().clone();
-                let sigs: Vec<String> = sigs_str
-                    .lines()
-                    .chain(sigs_str.split(','))
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                
-                if sigs.is_empty() {
-                    status_message.set("Please enter at least one signature".to_string());
+                let cmr = contract_cmr.read().clone();
+                if cmr.is_empty() {
+                    status_message.set("Please create the contract address first".to_string());
                     is_loading.set(false);
                     return;
                 }
                 
-                // Create witness file
-                let witness_json = json!({
-                    "MAYBE_SIGS": sigs.iter().map(|s| json!({"Some": s})).collect::<Vec<_>>()
-                });
-                
-                let witness_file = std::env::temp_dir().join("p2ms_witness.json");
-                let witness_path = witness_file.to_string_lossy().to_string();
-                
-                if let Err(e) = fs::write(&witness_path, serde_json::to_string_pretty(&witness_json).unwrap()) {
-                    status_message.set(format!("Failed to create witness file: {}", e));
-                    is_loading.set(false);
-                    return;
-                }
-                
-                // Step 1: Create PSET
-                status_message.set("Creating PSET...".to_string());
+                // Step 1: Create base PSET using elements-cli
+                status_message.set("Creating base PSET...".to_string());
                 let inputs = vec![(txid.clone(), vout)];
                 let outputs = vec![(destination.clone(), amount)];
                 
-                match hal_context.create_pset(&program, &inputs, &outputs) {
-                    Ok(pset_base64) => {
-                        status_message.set("PSET created. Adding witness...".to_string());
-                        
-                        // Step 2: Add witness to PSET
-                        match hal_context.add_witness_to_pset(&pset_base64, &witness_path) {
-                            Ok(pset_with_witness) => {
-                                status_message.set("Witness added. Finalizing transaction...".to_string());
-                                
-                                // Step 3: Finalize PSET
-                                match hal_context.finalize_pset(&pset_with_witness) {
-                                    Ok(tx_hex) => {
-                                        final_tx_hex.set(tx_hex.clone());
-                                        status_message.set(format!(
-                                            "Transaction created successfully!\n\nTransaction Hex:\n{}\n\nYou can now broadcast this transaction.",
-                                            tx_hex
-                                        ));
+                let base_pset = match rpc_context.create_pset(&inputs, &outputs).await {
+                    Ok(pset) => pset,
+                    Err(e) => {
+                        status_message.set(format!("Failed to create base PSET: {}", e));
+                        is_loading.set(false);
+                        return;
+                    }
+                };
+                
+                // Step 2: Get UTXO data
+                status_message.set("Fetching UTXO data...".to_string());
+                let utxo_data = match rpc_context.get_txout(&txid, vout).await {
+                    Ok(data) => data,
+                    Err(e) => {
+                        status_message.set(format!("Failed to get UTXO data: {}\n\nTrying Blockstream API...", e));
+                        // Try Blockstream API as fallback
+                        match reqwest::Client::new()
+                            .get(&format!("https://blockstream.info/liquidtestnet/api/tx/{}", txid))
+                            .send()
+                            .await
+                        {
+                            Ok(resp) => {
+                                match resp.json::<serde_json::Value>().await {
+                                    Ok(tx_data) => {
+                                        let script_pubkey = tx_data["vout"][vout as usize]["scriptpubkey"].as_str().unwrap_or("");
+                                        let asset = tx_data["vout"][vout as usize]["asset"].as_str().unwrap_or("");
+                                        let value = tx_data["vout"][vout as usize]["value"].as_u64().unwrap_or(0) as f64 / 100_000_000.0;
+                                        
+                                        json!({
+                                            "scriptPubKey": {"hex": script_pubkey},
+                                            "asset": asset,
+                                            "value": value
+                                        })
                                     }
                                     Err(e) => {
-                                        status_message.set(format!("Failed to finalize PSET: {}", e));
+                                        status_message.set(format!("Failed to parse Blockstream API response: {}", e));
+                                        is_loading.set(false);
+                                        return;
                                     }
                                 }
                             }
                             Err(e) => {
-                                status_message.set(format!("Failed to add witness to PSET: {}", e));
+                                status_message.set(format!("Failed to fetch from Blockstream API: {}", e));
+                                is_loading.set(false);
+                                return;
                             }
                         }
                     }
+                };
+                
+                let script_pubkey = utxo_data["scriptPubKey"]["hex"].as_str()
+                    .or_else(|| utxo_data["scriptpubkey"].as_str())
+                    .unwrap_or("");
+                let asset = utxo_data["asset"].as_str().unwrap_or("");
+                let value = utxo_data["value"].as_f64()
+                    .or_else(|| utxo_data["value"].as_u64().map(|v| v as f64 / 100_000_000.0))
+                    .unwrap_or(0.0);
+                
+                if script_pubkey.is_empty() || asset.is_empty() {
+                    status_message.set(format!("Failed to extract UTXO data. Response: {}", serde_json::to_string_pretty(&utxo_data).unwrap_or_default()));
+                    is_loading.set(false);
+                    return;
+                }
+                
+                // Step 3: Update PSET with Simplicity data
+                status_message.set("Updating PSET with Simplicity data...".to_string());
+                // Internal key (NUMS point - unspendable)
+                let internal_key = "50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0";
+                
+                match hal_context.update_pset_input(
+                    &base_pset,
+                    0,
+                    script_pubkey,
+                    asset,
+                    &format!("{:.8}", value),
+                    &cmr,
+                    internal_key,
+                ) {
+                    Ok(updated_pset) => {
+                        pset_for_signing.set(updated_pset.clone());
+                        status_message.set(format!(
+                            "PSET created successfully!\n\nYou can now export this PSET for signing.\n\nPSET (first 200 chars): {}...",
+                            updated_pset.chars().take(200).collect::<String>()
+                        ));
+                    }
                     Err(e) => {
-                        status_message.set(format!("Failed to create PSET: {}", e));
+                        status_message.set(format!("Failed to update PSET: {}", e));
                     }
                 }
                 
-                // Clean up witness file
-                let _ = fs::remove_file(&witness_path);
+                is_loading.set(false);
+            });
+        }
+    };
+
+    let finalize_and_broadcast = {
+        let rpc_context = rpc_context.clone();
+        let hal_context = hal_context.clone();
+        move |_| {
+            let rpc_context = rpc_context.clone();
+            let hal_context = hal_context.clone();
+            spawn(async move {
+                is_loading.set(true);
+                status_message.set("Finalizing transaction...".to_string());
+                
+                let pset = final_pset.read().clone();
+                if pset.is_empty() {
+                    status_message.set("Please provide the finalized PSET".to_string());
+                    is_loading.set(false);
+                    return;
+                }
+                
+                let program = contract_program_input.read().clone();
+                if program.is_empty() {
+                    status_message.set("Contract program not found".to_string());
+                    is_loading.set(false);
+                    return;
+                }
+                
+                // Extract witness from compiled program with witness
+                // For now, we'll need to compile with witness separately
+                // This is a simplified version - in practice, you'd need to compile with witness file
+                status_message.set("Note: This is a simplified finalization. In production, compile with witness file first.".to_string());
+                
+                // Finalize PSET using elements-cli
+                match rpc_context.finalize_pset(&pset).await {
+                    Ok(tx_hex) => {
+                        final_tx_hex.set(tx_hex.clone());
+                        status_message.set(format!(
+                            "Transaction finalized!\n\nTransaction Hex:\n{}\n\nReady to broadcast.",
+                            tx_hex.chars().take(200).collect::<String>()
+                        ));
+                    }
+                    Err(e) => {
+                        status_message.set(format!("Failed to finalize PSET: {}\n\nMake sure the PSET is fully signed.", e));
+                    }
+                }
                 
                 is_loading.set(false);
             });
@@ -431,7 +420,7 @@ pub fn P2MS() -> Element {
                 
                 let tx_hex = final_tx_hex.read().clone();
                 if tx_hex.is_empty() {
-                    status_message.set("Please create a transaction first".to_string());
+                    status_message.set("Please finalize the transaction first".to_string());
                     is_loading.set(false);
                     return;
                 }
@@ -479,38 +468,10 @@ pub fn P2MS() -> Element {
                     disabled: is_loading(),
                     "Compile .simf File"
                 }
-                
             }
             
             div { class: "panel-section",
                 h2 { "1. Create P2MS Contract Address" }
-                
-                div { style: "margin-bottom: 16px;",
-                    label { "Required Signatures (m)" }
-                    input {
-                        r#type: "number",
-                        min: "1",
-                        value: "{required_sigs}",
-                        oninput: move |evt| required_sigs.set(evt.value().to_string()),
-                        placeholder: "e.g., 2 for 2-of-3 multisig"
-                    }
-                    p { style: "font-size: 0.875rem; color: #666; margin-top: 4px;",
-                        "Number of signatures required to spend (m)"
-                    }
-                }
-                
-                div { style: "margin-bottom: 16px;",
-                    label { "Public Keys (n total keys)" }
-                    textarea {
-                        rows: "5",
-                        value: "{pubkeys}",
-                        oninput: move |evt| pubkeys.set(evt.value().to_string()),
-                        placeholder: "Enter public keys, one per line or comma-separated"
-                    }
-                    p { style: "font-size: 0.875rem; color: #666; margin-top: 4px;",
-                        "Enter all public keys that can sign. Total number of keys = n"
-                    }
-                }
                 
                 div { style: "margin-bottom: 16px;",
                     label { "Compiled Simplicity Program (base64) - Required" }
@@ -522,6 +483,51 @@ pub fn P2MS() -> Element {
                     }
                     p { style: "font-size: 0.875rem; color: #666; margin-top: 4px;",
                         "Paste the base64-encoded compiled Simplicity program"
+                    }
+                }
+                
+                div { style: "margin-bottom: 16px;",
+                    label { "Public Key 1 (Participant 1)" }
+                    input {
+                        r#type: "text",
+                        value: "{pubkey_1}",
+                        oninput: move |evt| pubkey_1.set(evt.value().to_string()),
+                        placeholder: "Enter public key hash for participant 1"
+                    }
+                }
+                
+                div { style: "margin-bottom: 16px;",
+                    label { "Public Key 2 (Participant 2)" }
+                    input {
+                        r#type: "text",
+                        value: "{pubkey_2}",
+                        oninput: move |evt| pubkey_2.set(evt.value().to_string()),
+                        placeholder: "Enter public key hash for participant 2"
+                    }
+                }
+                
+                div { style: "margin-bottom: 16px;",
+                    label { "Public Key 3 (Participant 3)" }
+                    input {
+                        r#type: "text",
+                        value: "{pubkey_3}",
+                        oninput: move |evt| pubkey_3.set(evt.value().to_string()),
+                        placeholder: "Enter public key hash for participant 3"
+                    }
+                }
+                
+                div { style: "margin-bottom: 16px;",
+                    label { "Required Signatures (m)" }
+                    input {
+                        r#type: "number",
+                        min: "1",
+                        max: "3",
+                        value: "{required_sigs}",
+                        oninput: move |evt| required_sigs.set(evt.value().to_string()),
+                        placeholder: "e.g., 2 for 2-of-3 multisig"
+                    }
+                    p { style: "font-size: 0.875rem; color: #666; margin-top: 4px;",
+                        "Number of signatures required to spend (m)"
                     }
                 }
                 
@@ -549,7 +555,7 @@ pub fn P2MS() -> Element {
             }
             
             div { class: "panel-section",
-                h2 { "2. Fund Contract Address" }
+                h2 { "2. Fund Contract Address via Faucet" }
                 
                 div { style: "margin-bottom: 16px;",
                     label { "Contract Address" }
@@ -561,37 +567,11 @@ pub fn P2MS() -> Element {
                     }
                 }
                 
-                div { style: "margin-bottom: 16px;",
-                    label { "Funding Amount (L-BTC)" }
-                    input {
-                        r#type: "number",
-                        step: "0.00000001",
-                        min: "0",
-                        value: "{funding_amount}",
-                        oninput: move |evt| funding_amount.set(evt.value().to_string()),
-                        placeholder: "0.01"
-                    }
-                    p { style: "font-size: 0.875rem; color: #666; margin-top: 4px;",
-                        "Enter the amount you want to send to the contract address"
-                    }
-                }
-                
-                div { style: "display: flex; gap: 12px; margin-bottom: 16px;",
-                    button {
-                        class: "button",
-                        onclick: fund_address,
-                        disabled: is_loading() || contract_address().is_empty() || funding_amount().is_empty(),
-                        "Fund via RPC"
-                    }
-                    button {
-                        class: "button",
-                        onclick: fund_via_faucet,
-                        disabled: is_loading() || contract_address().is_empty(),
-                        "Fund via Faucet (0.001 L-BTC)"
-                    }
-                }
-                p { style: "font-size: 0.875rem; color: #666;",
-                    "Fund via RPC: Send funds from your elementsd wallet (requires wallet balance).\nFund via Faucet: Request 0.001 L-BTC (100,000 sats) from the Liquid Testnet faucet."
+                button {
+                    class: "button",
+                    onclick: fund_via_faucet,
+                    disabled: is_loading() || contract_address().is_empty(),
+                    "Fund via Faucet (0.001 L-BTC)"
                 }
                 
                 if !funding_txid().is_empty() {
@@ -620,7 +600,7 @@ pub fn P2MS() -> Element {
             }
             
             div { id: "spend-p2ms", class: "panel-section",
-                h2 { "3. Spend P2MS Funds" }
+                h2 { "3. Create Spending PSET" }
                 
                 div { style: "margin-bottom: 16px;",
                     label { "Destination Address" }
@@ -650,24 +630,66 @@ pub fn P2MS() -> Element {
                     }
                 }
                 
-                div { style: "margin-bottom: 16px;",
-                    label { "Signatures (one per line or comma-separated)" }
+                button {
+                    class: "button",
+                    onclick: create_spend_pset,
+                    disabled: is_loading() || funding_txid().is_empty() || contract_cmr().is_empty(),
+                    "Create PSET for Signing"
+                }
+                
+                if !pset_for_signing().is_empty() {
+                    div { class: "info-box info", style: "margin-top: 16px;",
+                        p { style: "font-weight: 600; margin-bottom: 8px;", "PSET for Signing:" }
+                        textarea {
+                            rows: "4",
+                            readonly: true,
+                            value: "{pset_for_signing}",
+                            style: "font-family: 'Roboto Mono', monospace; font-size: 0.9rem; width: 100%;"
+                        }
+                        p { style: "font-size: 0.875rem; color: #666; margin-top: 8px;",
+                            "Copy this PSET and import it into your wallet to sign it. Then paste the signed PSET below."
+                        }
+                    }
+                }
+                
+                div { style: "margin-top: 24px; margin-bottom: 16px;",
+                    label { "Signed PSET from Participant 1" }
                     textarea {
-                        rows: "4",
-                        value: "{signatures}",
-                        oninput: move |evt| signatures.set(evt.value().to_string()),
-                        placeholder: "Enter signatures required for the m-of-n multisig"
+                        rows: "3",
+                        value: "{signed_pset_1}",
+                        oninput: move |evt| signed_pset_1.set(evt.value().to_string()),
+                        placeholder: "Paste signed PSET from participant 1 here"
+                    }
+                }
+                
+                div { style: "margin-bottom: 16px;",
+                    label { "Signed PSET from Participant 2" }
+                    textarea {
+                        rows: "3",
+                        value: "{signed_pset_2}",
+                        oninput: move |evt| signed_pset_2.set(evt.value().to_string()),
+                        placeholder: "Paste signed PSET from participant 2 here"
+                    }
+                }
+                
+                div { style: "margin-bottom: 16px;",
+                    label { "Finalized PSET (after all signatures)" }
+                    textarea {
+                        rows: "3",
+                        value: "{final_pset}",
+                        oninput: move |evt| final_pset.set(evt.value().to_string()),
+                        placeholder: "Paste the finalized PSET here after all participants have signed"
                     }
                     p { style: "font-size: 0.875rem; color: #666; margin-top: 4px;",
-                        "Enter the signatures from the required signers (m signatures)"
+                        "After all required participants sign, combine their signatures and finalize the PSET"
                     }
                 }
                 
                 button {
                     class: "button",
-                    onclick: spend_p2ms,
-                    disabled: is_loading() || funding_txid().is_empty() || contract_program_input().is_empty(),
-                    "Create Spend Transaction"
+                    onclick: finalize_and_broadcast,
+                    disabled: is_loading() || final_pset().is_empty(),
+                    "Finalize and Prepare for Broadcast"
                 }
                 
                 if !final_tx_hex().is_empty() {

@@ -5,6 +5,7 @@
 use anyhow::{Result, Context};
 use std::path::PathBuf;
 use std::process::Command;
+use serde_json;
 
 /// Wrapper for hal-simplicity CLI
 pub struct HalWrapper {
@@ -241,17 +242,120 @@ impl HalWrapper {
             .map(|s| s.trim().to_string())
     }
 
-    /// Finalize a PSET to get the final transaction hex
+    /// Update PSET input with Simplicity data
     /// 
-    /// Runs: hal-simplicity simplicity pset finalize --pset <pset>
-    /// Returns: Final transaction hex
-    pub fn finalize_pset(&self, pset_base64: &str) -> Result<String> {
+    /// Runs: hal-simplicity simplicity pset update-input <pset> <input_index> -i <scriptPubKey:asset:value> -c <cmr> -p <internal_key>
+    /// Returns: Updated PSET base64 string
+    pub fn update_pset_input(
+        &self,
+        pset_base64: &str,
+        input_index: u32,
+        script_pubkey: &str,
+        asset: &str,
+        value: &str,
+        cmr: &str,
+        internal_key: &str,
+    ) -> Result<String> {
+        let mut cmd = Command::new(&self.hal_cmd());
+        cmd.arg("simplicity")
+            .arg("pset")
+            .arg("update-input")
+            .arg(pset_base64)
+            .arg(input_index.to_string())
+            .arg("-i")
+            .arg(format!("{}:{}:{}", script_pubkey, asset, value))
+            .arg("-c")
+            .arg(cmr)
+            .arg("-p")
+            .arg(internal_key);
+
+        let output = cmd.output()
+            .context("Failed to execute hal-simplicity pset update-input")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!(
+                "hal-simplicity pset update-input failed: {}",
+                stderr
+            ));
+        }
+
+        let stdout = String::from_utf8(output.stdout)
+            .context("Invalid UTF-8 in hal-simplicity output")?;
+
+        // Parse JSON response to extract pset field
+        let json: serde_json::Value = serde_json::from_str(&stdout)
+            .context("Failed to parse hal-simplicity JSON response")?;
+        
+        json.get("pset")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow::anyhow!("No pset field in response"))
+    }
+
+    /// Calculate sighash and sign
+    /// 
+    /// Runs: hal-simplicity simplicity sighash <pset> <input_index> <cmr> -x <privkey>
+    /// Returns: Signature hex string
+    pub fn sighash_and_sign(
+        &self,
+        pset_base64: &str,
+        input_index: u32,
+        cmr: &str,
+        privkey: &str,
+    ) -> Result<String> {
+        let mut cmd = Command::new(&self.hal_cmd());
+        cmd.arg("simplicity")
+            .arg("sighash")
+            .arg(pset_base64)
+            .arg(input_index.to_string())
+            .arg(cmr)
+            .arg("-x")
+            .arg(privkey);
+
+        let output = cmd.output()
+            .context("Failed to execute hal-simplicity sighash")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!(
+                "hal-simplicity sighash failed: {}",
+                stderr
+            ));
+        }
+
+        let stdout = String::from_utf8(output.stdout)
+            .context("Invalid UTF-8 in hal-simplicity output")?;
+
+        // Parse JSON response to extract signature field
+        let json: serde_json::Value = serde_json::from_str(&stdout)
+            .context("Failed to parse hal-simplicity JSON response")?;
+        
+        json.get("signature")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow::anyhow!("No signature field in response"))
+    }
+
+    /// Finalize PSET with Simplicity program and witness
+    /// 
+    /// Runs: hal-simplicity simplicity pset finalize <pset> <input_index> <program> <witness>
+    /// Returns: Finalized PSET base64 string
+    pub fn finalize_pset_with_witness(
+        &self,
+        pset_base64: &str,
+        input_index: u32,
+        program: &str,
+        witness: &str,
+    ) -> Result<String> {
         let mut cmd = Command::new(&self.hal_cmd());
         cmd.arg("simplicity")
             .arg("pset")
             .arg("finalize")
-            .arg("--pset")
-            .arg(pset_base64);
+            .arg(pset_base64)
+            .arg(input_index.to_string())
+            .arg(program)
+            .arg(witness);
 
         let output = cmd.output()
             .context("Failed to execute hal-simplicity pset finalize")?;
@@ -264,9 +368,17 @@ impl HalWrapper {
             ));
         }
 
-        String::from_utf8(output.stdout)
-            .context("Invalid UTF-8 in hal-simplicity output")
-            .map(|s| s.trim().to_string())
+        let stdout = String::from_utf8(output.stdout)
+            .context("Invalid UTF-8 in hal-simplicity output")?;
+
+        // Parse JSON response to extract pset field
+        let json: serde_json::Value = serde_json::from_str(&stdout)
+            .context("Failed to parse hal-simplicity JSON response")?;
+        
+        json.get("pset")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow::anyhow!("No pset field in response"))
     }
 }
 

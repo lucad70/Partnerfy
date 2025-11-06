@@ -161,6 +161,51 @@ impl ElementsRPC {
             .ok_or_else(|| anyhow::anyhow!("Invalid unspent format"))
     }
 
+    /// Create a PSET (Partially Signed Elements Transaction)
+    /// 
+    /// Creates a base PSET without signatures
+    pub async fn create_pset(
+        &self,
+        inputs: &[(String, u32)],
+        outputs: &[(String, f64)],
+    ) -> Result<String> {
+        let inputs_json: Vec<Value> = inputs
+            .iter()
+            .map(|(txid, vout)| {
+                json!({
+                    "txid": txid,
+                    "vout": vout
+                })
+            })
+            .collect();
+
+        let mut outputs_map = serde_json::Map::new();
+        for (addr, amount) in outputs {
+            outputs_map.insert(addr.clone(), json!(amount));
+        }
+
+        let params = json!([inputs_json, outputs_map]);
+        let result = self.call("createpsbt", params).await?;
+        result.as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow::anyhow!("Invalid PSET format"))
+    }
+
+    /// Finalize a PSET to get the raw transaction hex
+    pub async fn finalize_pset(&self, pset: &str) -> Result<String> {
+        let result = self.call("finalizepsbt", json!([pset])).await?;
+        if let Some(hex) = result.get("hex").and_then(|v| v.as_str()) {
+            Ok(hex.to_string())
+        } else {
+            Err(anyhow::anyhow!("PSET finalization failed or incomplete"))
+        }
+    }
+
+    /// Get transaction output details
+    pub async fn get_txout(&self, txid: &str, vout: u32) -> Result<Value> {
+        self.call("gettxout", json!([txid, vout])).await
+    }
+
     /// Get settings reference
     pub fn settings(&self) -> &Settings {
         &self.settings
