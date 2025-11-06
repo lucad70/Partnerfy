@@ -28,6 +28,7 @@ pub fn P2MS() -> Element {
     let mut funding_txid = use_signal(|| String::new());
     let mut funding_vout = use_signal(|| String::new());
     let mut funding_amount = use_signal(|| String::new());
+    let mut faucet_amount = use_signal(|| "0.001".to_string());
     let mut spend_destination = use_signal(|| String::new());
     let mut spend_amount = use_signal(|| String::new());
     let mut pset_for_signing = use_signal(|| String::new());
@@ -143,7 +144,9 @@ pub fn P2MS() -> Element {
     };
 
     let fund_via_faucet = {
+        let faucet_amount = faucet_amount.clone();
         move |_| {
+            let faucet_amount = faucet_amount.clone();
             spawn(async move {
                 is_loading.set(true);
                 status_message.set("Funding contract address via Liquid Testnet faucet...".to_string());
@@ -151,6 +154,15 @@ pub fn P2MS() -> Element {
                 let addr = contract_address.read().clone();
                 if addr.is_empty() {
                     status_message.set("Please create the contract address first".to_string());
+                    is_loading.set(false);
+                    return;
+                }
+                
+                // Get the faucet amount from user input
+                let amount_str = faucet_amount.read().clone();
+                let amount: f64 = amount_str.parse().unwrap_or(0.001);
+                if amount <= 0.0 {
+                    status_message.set(format!("Invalid faucet amount: {}. Please enter a positive number.", amount_str));
                     is_loading.set(false);
                     return;
                 }
@@ -170,11 +182,12 @@ pub fn P2MS() -> Element {
                                         let txid_str = txid.as_str().to_string();
                                         funding_txid.set(txid_str.clone());
                                         funding_vout.set("0".to_string());
-                                        funding_amount.set("0.001".to_string());
+                                        funding_amount.set(amount_str.clone());
                                         
+                                        let sats = (amount * 100_000_000.0) as u64;
                                         status_message.set(format!(
-                                            "Funding successful via faucet!\n\nContract Address: {}\nAmount: 0.001 L-BTC (100,000 sats)\nTransaction ID: {}\nVOUT: 0\n\nView on explorer: https://blockstream.info/liquidtestnet/tx/{}",
-                                            addr, txid_str, txid_str
+                                            "Funding successful via faucet!\n\nContract Address: {}\nAmount: {} L-BTC ({} sats)\nTransaction ID: {}\nVOUT: 0\n\nView on explorer: https://blockstream.info/liquidtestnet/tx/{}",
+                                            addr, amount_str, sats, txid_str, txid_str
                                         ));
                                     } else {
                                         status_message.set(format!(
@@ -189,10 +202,11 @@ pub fn P2MS() -> Element {
                                             let txid_str = txid.as_str().to_string();
                                             funding_txid.set(txid_str.clone());
                                             funding_vout.set("0".to_string());
-                                            funding_amount.set("0.001".to_string());
+                                            funding_amount.set(amount_str.clone());
+                                            let sats = (amount * 100_000_000.0) as u64;
                                             status_message.set(format!(
-                                                "Funding successful via faucet!\n\nContract Address: {}\nAmount: 0.001 L-BTC\nTransaction ID: {}\nVOUT: 0",
-                                                addr, txid_str
+                                                "Funding successful via faucet!\n\nContract Address: {}\nAmount: {} L-BTC ({} sats)\nTransaction ID: {}\nVOUT: 0",
+                                                addr, amount_str, sats, txid_str
                                             ));
                                         } else {
                                             status_message.set(format!(
@@ -884,11 +898,26 @@ pub fn P2MS() -> Element {
                     }
                 }
                 
+                div { style: "margin-bottom: 16px;",
+                    label { "Faucet Amount (L-BTC)" }
+                    input {
+                        r#type: "number",
+                        step: "0.00000001",
+                        min: "0.00000001",
+                        value: "{faucet_amount}",
+                        oninput: move |evt| faucet_amount.set(evt.value().to_string()),
+                        placeholder: "0.001"
+                    }
+                    p { style: "font-size: 0.875rem; color: #666; margin-top: 4px;",
+                        "Amount to request from the Liquid Testnet faucet (default: 0.001 L-BTC)"
+                    }
+                }
+                
                 button {
                     class: "button",
                     onclick: fund_via_faucet,
-                    disabled: is_loading() || contract_address().is_empty(),
-                    "Fund via Faucet (0.001 L-BTC)"
+                    disabled: is_loading() || contract_address().is_empty() || faucet_amount().is_empty(),
+                    "Fund via Faucet"
                 }
                 
                 if !funding_txid().is_empty() {
