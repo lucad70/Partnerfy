@@ -28,11 +28,13 @@ impl HalWrapper {
     /// Get covenant info from compiled program
     /// 
     /// Runs: hal-simplicity simplicity info <program.base64>
-    pub fn get_covenant_info(&self, program_path: &str) -> Result<String> {
+    /// Returns: JSON string with CMR, address, etc.
+    pub fn get_covenant_info(&self, program_base64: &str) -> Result<String> {
         let output = Command::new(&self.hal_cmd())
             .arg("simplicity")
+            .arg("simplicity")
             .arg("info")
-            .arg(program_path)
+            .arg(program_base64)
             .output()
             .context("Failed to execute hal-simplicity")?;
 

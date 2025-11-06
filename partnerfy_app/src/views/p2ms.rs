@@ -1,11 +1,12 @@
 //! P2MS (Pay-to-Multisig) workflow page
 //! 
-//! Creates a Simplicity contract address for multisig, funds it, and manages spending
+//! Creates a Simplicity contract address for multisig, funds it via faucet, and manages spending
 
 use crate::app_core::{ElementsRPC, HalWrapper};
 use dioxus::prelude::*;
 use std::sync::Arc;
 use serde_json;
+use regex::Regex;
 
 #[component]
 pub fn P2MS() -> Element {
@@ -15,8 +16,8 @@ pub fn P2MS() -> Element {
     let mut contract_address = use_signal(|| String::new());
     let mut contract_cmr = use_signal(|| String::new());
     let mut contract_program = use_signal(|| String::new());
-    let mut funding_amount = use_signal(|| String::new());
     let mut funding_txid = use_signal(|| String::new());
+    let mut funding_vout = use_signal(|| String::new());
     let mut status_message = use_signal(|| String::new());
     let mut is_loading = use_signal(|| false);
     
@@ -33,6 +34,13 @@ pub fn P2MS() -> Element {
                 
                 let m: u32 = required_sigs.read().parse().unwrap_or(0);
                 let pubkeys_str = pubkeys.read().clone();
+                let program = contract_program_input.read().clone();
+                
+                if program.is_empty() {
+                    status_message.set("Please enter a compiled Simplicity program (base64)".to_string());
+                    is_loading.set(false);
+                    return;
+                }
                 
                 if m == 0 {
                     status_message.set("Please enter the number of required signatures (m)".to_string());
@@ -68,23 +76,12 @@ pub fn P2MS() -> Element {
                     return;
                 }
                 
-                // For now, we'll create a placeholder program
-                // In a real implementation, you would use hal-simplicity to create a P2MS Simplicity program
-                // This would involve creating a program that checks m-of-n signatures
-                
-                // Placeholder: Create a simple program representation
-                // In practice, you'd call hal-simplicity to compile a P2MS Simplicity program
-                let program_placeholder = format!("p2ms_{}of{}", m, n);
-                
-                // Check if user provided a compiled program
-                let program = contract_program_input.read().clone();
-                
-                if !program.is_empty() {
-                    // User provided a compiled program - use hal-simplicity to get the address
-                    match hal_context.get_covenant_info(&program) {
-                        Ok(info_str) => {
-                            // Try to parse JSON response
-                            if let Ok(info_json) = serde_json::from_str::<serde_json::Value>(&info_str) {
+                // Call hal-simplicity to get covenant info
+                match hal_context.get_covenant_info(&program) {
+                    Ok(info_str) => {
+                        // Parse JSON response
+                        match serde_json::from_str::<serde_json::Value>(&info_str) {
+                            Ok(info_json) => {
                                 if let (Some(cmr), Some(addr)) = (
                                     info_json.get("cmr").and_then(|v| v.as_str()),
                                     info_json.get("liquid_testnet_address_unconf").and_then(|v| v.as_str())
@@ -98,43 +95,26 @@ pub fn P2MS() -> Element {
                                         keys.iter().enumerate().map(|(i, k)| format!("  {}. {}", i+1, k)).collect::<Vec<_>>().join("\n")
                                     ));
                                 } else {
-                                    // Fallback if JSON parsing works but structure is different
-                                    contract_program.set(program.clone());
                                     status_message.set(format!(
-                                        "Program processed. Response:\n{}\n\nPlease check the output for CMR and address information.\n\nPublic Keys ({}):\n{}",
-                                        info_str, n,
-                                        keys.iter().enumerate().map(|(i, k)| format!("  {}. {}", i+1, k)).collect::<Vec<_>>().join("\n")
+                                        "Error: Could not extract CMR or address from hal-simplicity response.\n\nResponse:\n{}",
+                                        serde_json::to_string_pretty(&info_json).unwrap_or_else(|_| info_str.clone())
                                     ));
                                 }
-                            } else {
-                                // Not JSON, treat as plain text
-                                contract_program.set(program.clone());
+                            }
+                            Err(e) => {
                                 status_message.set(format!(
-                                    "Program processed. hal-simplicity output:\n{}\n\nPublic Keys ({}):\n{}",
-                                    info_str, n,
-                                    keys.iter().enumerate().map(|(i, k)| format!("  {}. {}", i+1, k)).collect::<Vec<_>>().join("\n")
+                                    "Error parsing hal-simplicity JSON response: {}\n\nRaw output:\n{}",
+                                    e, info_str
                                 ));
                             }
                         }
-                        Err(e) => {
-                            status_message.set(format!(
-                                "Error getting covenant info from hal-simplicity: {}\n\nPlease ensure:\n1. hal-simplicity is installed and in PATH\n2. The program is valid base64\n3. Try running: hal-simplicity simplicity info <your_program.base64>",
-                                e
-                            ));
-                        }
                     }
-                } else {
-                    // No program provided - generate placeholder and guide user
-                    let placeholder_addr = format!("p2ms_{}of{}_placeholder", m, n);
-                    contract_address.set(placeholder_addr.clone());
-                    contract_cmr.set(format!("cmr_{}of{}", m, n));
-                    contract_program.set(program_placeholder.clone());
-                    let cmr_val = format!("cmr_{}of{}", m, n);
-                    status_message.set(format!(
-                        "P2MS Contract parameters configured!\n\nType: {}-of-{} multisig\nAddress: {}\nCMR: {}\n\n⚠️  Note: This is a placeholder address.\n\nTo get a real Simplicity P2MS address:\n1. Create a .simf file with your P2MS logic\n2. Compile it: simc p2ms.simf -o p2ms.base64\n3. Paste the base64 program above and click 'Create Contract Address' again\n\nPublic Keys ({}):\n{}",
-                        m, n, placeholder_addr, cmr_val, n,
-                        keys.iter().enumerate().map(|(i, k)| format!("  {}. {}", i+1, k)).collect::<Vec<_>>().join("\n")
-                    ));
+                    Err(e) => {
+                        status_message.set(format!(
+                            "Error calling hal-simplicity: {}\n\nPlease ensure:\n1. hal-simplicity is installed and in PATH\n2. The program is valid base64\n3. Try running: hal-simplicity simplicity simplicity info \"<your_program>\"",
+                            e
+                        ));
+                    }
                 }
                 
                 is_loading.set(false);
@@ -142,13 +122,11 @@ pub fn P2MS() -> Element {
         }
     };
 
-    let fund_address = {
-        let rpc_context = rpc_context.clone();
+    let fund_via_faucet = {
         move |_| {
-            let rpc_context = rpc_context.clone();
             spawn(async move {
                 is_loading.set(true);
-                status_message.set("Funding contract address...".to_string());
+                status_message.set("Funding contract address via Liquid Testnet faucet...".to_string());
                 
                 let addr = contract_address.read().clone();
                 if addr.is_empty() {
@@ -157,23 +135,66 @@ pub fn P2MS() -> Element {
                     return;
                 }
                 
-                let amount: f64 = funding_amount.read().parse().unwrap_or(0.0);
-                if amount <= 0.0 {
-                    status_message.set("Please enter a valid funding amount".to_string());
-                    is_loading.set(false);
-                    return;
-                }
+                // Call the Liquid Testnet faucet API
+                let faucet_url = format!("https://liquidtestnet.com/faucet?address={}&action=lbtc", addr);
                 
-                match rpc_context.send_to_address(&addr, amount).await {
-                    Ok(txid) => {
-                        funding_txid.set(txid.clone());
-                        status_message.set(format!(
-                            "Funding transaction sent successfully!\n\nTransaction ID: {}\nAmount: {} L-BTC\nAddress: {}\n\nView on explorer: https://blockstream.info/liquidtestnet/tx/{}",
-                            txid, amount, addr, txid
-                        ));
+                match reqwest::Client::new().get(&faucet_url).send().await {
+                    Ok(response) => {
+                        match response.text().await {
+                            Ok(html_response) => {
+                                // Parse the HTML response to extract transaction ID
+                                // Look for pattern like "transaction abc123..." or "txid: abc123"
+                                let txid_pattern = Regex::new(r"transaction\s+([a-f0-9]{64})").unwrap();
+                                
+                                if let Some(captures) = txid_pattern.captures(&html_response) {
+                                    if let Some(txid) = captures.get(1) {
+                                        let txid_str = txid.as_str().to_string();
+                                        funding_txid.set(txid_str.clone());
+                                        funding_vout.set("0".to_string()); // Faucet typically sends to vout 0
+                                        
+                                        status_message.set(format!(
+                                            "Funding successful via faucet!\n\nContract Address: {}\nTransaction ID: {}\nVOUT: 0\n\nView on explorer: https://blockstream.info/liquidtestnet/tx/{}",
+                                            addr, txid_str, txid_str
+                                        ));
+                                    } else {
+                                        status_message.set(format!(
+                                            "Faucet response received but could not extract transaction ID.\n\nResponse:\n{}",
+                                            html_response.chars().take(500).collect::<String>()
+                                        ));
+                                    }
+                                } else {
+                                    // Try alternative patterns
+                                    let alt_pattern = Regex::new(r"txid[:\s]+([a-f0-9]{64})").unwrap();
+                                    if let Some(captures) = alt_pattern.captures(&html_response) {
+                                        if let Some(txid) = captures.get(1) {
+                                            let txid_str = txid.as_str().to_string();
+                                            funding_txid.set(txid_str.clone());
+                                            funding_vout.set("0".to_string());
+                                            status_message.set(format!(
+                                                "Funding successful via faucet!\n\nContract Address: {}\nTransaction ID: {}\nVOUT: 0",
+                                                addr, txid_str
+                                            ));
+                                        } else {
+                                            status_message.set(format!(
+                                                "Faucet response received but could not extract transaction ID.\n\nResponse:\n{}",
+                                                html_response.chars().take(500).collect::<String>()
+                                            ));
+                                        }
+                                    } else {
+                                        status_message.set(format!(
+                                            "Faucet response received but could not find transaction ID in response.\n\nResponse preview:\n{}",
+                                            html_response.chars().take(500).collect::<String>()
+                                        ));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                status_message.set(format!("Error reading faucet response: {}", e));
+                            }
+                        }
                     }
                     Err(e) => {
-                        status_message.set(format!("Error funding address: {}", e));
+                        status_message.set(format!("Error calling faucet API: {}\n\nURL: {}", e, faucet_url));
                     }
                 }
                 
@@ -217,15 +238,15 @@ pub fn P2MS() -> Element {
                 }
                 
                 div { style: "margin-bottom: 16px;",
-                    label { "Compiled Simplicity Program (base64) - Optional" }
+                    label { "Compiled Simplicity Program (base64) - Required" }
                     textarea {
-                        rows: "4",
+                        rows: "6",
                         value: "{contract_program_input}",
                         oninput: move |evt| contract_program_input.set(evt.value().to_string()),
-                        placeholder: "Paste compiled P2MS program base64 here, or leave empty for placeholder"
+                        placeholder: "Paste compiled P2MS program base64 here"
                     }
                     p { style: "font-size: 0.875rem; color: #666; margin-top: 4px;",
-                        "If you have a compiled Simplicity P2MS program, paste it here to get the real covenant address"
+                        "Paste the base64-encoded compiled Simplicity program. Use: hal-simplicity simplicity simplicity info \"<program>\" to verify"
                     }
                 }
                 
@@ -253,7 +274,7 @@ pub fn P2MS() -> Element {
             }
             
             div { class: "panel-section",
-                h2 { "2. Fund Contract Address" }
+                h2 { "2. Fund Contract Address via Faucet" }
                 
                 div { style: "margin-bottom: 16px;",
                     label { "Contract Address" }
@@ -263,28 +284,16 @@ pub fn P2MS() -> Element {
                         placeholder: "Will be auto-filled after creating contract",
                         readonly: !contract_address().is_empty()
                     }
-                }
-                
-                div { style: "margin-bottom: 16px;",
-                    label { "Funding Amount (L-BTC)" }
-                    input {
-                        r#type: "number",
-                        step: "0.00000001",
-                        min: "0",
-                        value: "{funding_amount}",
-                        oninput: move |evt| funding_amount.set(evt.value().to_string()),
-                        placeholder: "0.01"
-                    }
                     p { style: "font-size: 0.875rem; color: #666; margin-top: 4px;",
-                        "Amount to send to the contract address"
+                        "This address will be funded with 100,000 sats (0.001 L-BTC) from the Liquid Testnet faucet"
                     }
                 }
                 
                 button {
                     class: "button",
-                    onclick: fund_address,
+                    onclick: fund_via_faucet,
                     disabled: is_loading() || contract_address().is_empty(),
-                    "Fund Address"
+                    "Fund via Faucet"
                 }
                 
                 if !funding_txid().is_empty() {
@@ -293,6 +302,10 @@ pub fn P2MS() -> Element {
                         p { style: "font-family: 'Roboto Mono', monospace; font-size: 0.9rem; word-break: break-all;",
                             "{funding_txid}"
                         }
+                        p { style: "font-weight: 600; margin-top: 8px; margin-bottom: 4px;", "VOUT:" }
+                        p { style: "font-family: 'Roboto Mono', monospace; font-size: 0.9rem;",
+                            "{funding_vout}"
+                        }
                         p { style: "margin-top: 8px;",
                             a {
                                 href: format!("https://blockstream.info/liquidtestnet/tx/{}", funding_txid()),
@@ -300,6 +313,9 @@ pub fn P2MS() -> Element {
                                 style: "color: #0066cc; text-decoration: underline;",
                                 "View on Blockstream Explorer →"
                             }
+                        }
+                        p { style: "margin-top: 8px; font-weight: 600;",
+                            "UTXO Reference: {funding_txid}:{funding_vout}"
                         }
                     }
                 }
@@ -326,4 +342,3 @@ pub fn P2MS() -> Element {
         }
     }
 }
-

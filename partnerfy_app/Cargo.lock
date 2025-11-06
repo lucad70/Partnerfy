@@ -3529,6 +3529,7 @@ dependencies = [
  "elements 0.24.1",
  "hal-simplicity",
  "hex 0.4.3",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

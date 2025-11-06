@@ -64,7 +64,6 @@ fn main() {
 #[component]
 fn App() -> Element {
     use std::sync::Arc;
-    use tokio::sync::Mutex;
     
     // Initialize settings (default to Liquid Testnet)
     let settings = Settings::default();
