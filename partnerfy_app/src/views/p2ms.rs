@@ -510,6 +510,30 @@ pub fn P2MS() -> Element {
                 let privkey2 = privkey_2.read().clone();
                 let privkey3 = privkey_3.read().clone();
                 
+                // Validate private keys match expected pattern (for p2ms.simf with 1*G, 2*G, 3*G)
+                // pk1 = 1*G (private key should end in ...0001)
+                // pk2 = 2*G (private key should end in ...0002)
+                // pk3 = 3*G (private key should end in ...0003)
+                // Note: This is a heuristic check. The actual public key derivation would be more accurate,
+                // but this helps catch common mistakes where keys are in the wrong fields.
+                let mut key_warnings = Vec::new();
+                let privkey1_trimmed = privkey1.trim().to_lowercase();
+                let privkey2_trimmed = privkey2.trim().to_lowercase();
+                let privkey3_trimmed = privkey3.trim().to_lowercase();
+                
+                if !privkey1.is_empty() && !privkey1_trimmed.ends_with("0001") {
+                    key_warnings.push("Warning: privkey_1 doesn't end in ...0001. It should correspond to pk1 (0x79be667e... = 1*G). If your key is correct, you can ignore this warning.");
+                }
+                if !privkey2.is_empty() && !privkey2_trimmed.ends_with("0002") {
+                    key_warnings.push("Warning: privkey_2 doesn't end in ...0002. It should correspond to pk2 (0xc6047f94... = 2*G). If your key is correct, you can ignore this warning.");
+                }
+                if !privkey3.is_empty() && !privkey3_trimmed.ends_with("0003") {
+                    key_warnings.push("Warning: privkey_3 doesn't end in ...0003. It should correspond to pk3 (0xf9308a01... = 3*G). If your key is correct, you can ignore this warning.");
+                }
+                if !key_warnings.is_empty() {
+                    status_message.set(format!("{}\n\nContinuing with signing...", key_warnings.join("\n")));
+                }
+                
                 let mut sig1: Option<String> = None;
                 let mut sig2: Option<String> = None;
                 let mut sig3: Option<String> = None;
@@ -866,7 +890,35 @@ pub fn P2MS() -> Element {
                         ));
                     }
                     Err(e) => {
-                        status_message.set(format!("Failed to broadcast transaction: {}", e));
+                        let error_msg = e.to_string();
+                        let detailed_error = if error_msg.contains("Assertion failed inside jet") || error_msg.contains("non-mandatory-script-verify-flag") {
+                            format!(
+                                "Failed to broadcast transaction: {}\n\n\
+                                This error ('Assertion failed inside jet' or 'non-mandatory-script-verify-flag') means the Jet covenant execution failed.\n\n\
+                                Common causes:\n\
+                                1. Signatures don't match the public keys in the program\n\
+                                   - Position 0 must be signature for pk1 (0x79be667e... = 1*G, private key ending in ...0001)\n\
+                                   - Position 1 must be signature for pk2 (0xc6047f94... = 2*G, private key ending in ...0002)\n\
+                                   - Position 2 must be signature for pk3 (0xf9308a01... = 3*G, private key ending in ...0003)\n\
+                                2. Private keys don't correspond to the public keys in p2ms.simf\n\
+                                   - Ensure privkey_1 corresponds to pk1 (ends in ...0001)\n\
+                                   - Ensure privkey_2 corresponds to pk2 (ends in ...0002)\n\
+                                   - Ensure privkey_3 corresponds to pk3 (ends in ...0003)\n\
+                                3. The PSET changed after signing (signatures are PSET-specific)\n\
+                                   - Re-create the PSET and sign again if you modified it\n\
+                                4. Invalid signatures (signature verification failed)\n\
+                                   - One or more signatures don't verify against their public keys\n\n\
+                                Troubleshooting:\n\
+                                - Check the witness file to see which signatures are in which positions\n\
+                                - Verify your private keys match the public keys in p2ms.simf\n\
+                                - Try re-creating the PSET and signing again\n\
+                                - Ensure you have exactly 2 valid signatures for 2-of-3 multisig",
+                                error_msg
+                            )
+                        } else {
+                            format!("Failed to broadcast transaction: {}", error_msg)
+                        };
+                        status_message.set(detailed_error);
                     }
                 }
                 
