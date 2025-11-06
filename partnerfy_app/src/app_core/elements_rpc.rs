@@ -164,11 +164,15 @@ impl ElementsRPC {
     /// Create a PSET (Partially Signed Elements Transaction)
     /// 
     /// Creates a base PSET without signatures
+    /// 
+    /// Inputs: Array of objects with "txid" and "vout"
+    /// Outputs: Array of objects with "address": amount pairs
     pub async fn create_pset(
         &self,
         inputs: &[(String, u32)],
         outputs: &[(String, f64)],
     ) -> Result<String> {
+        // Format inputs as array of objects
         let inputs_json: Vec<Value> = inputs
             .iter()
             .map(|(txid, vout)| {
@@ -179,12 +183,18 @@ impl ElementsRPC {
             })
             .collect();
 
-        let mut outputs_map = serde_json::Map::new();
-        for (addr, amount) in outputs {
-            outputs_map.insert(addr.clone(), json!(amount));
-        }
+        // Format outputs as array of objects where each object has the address as key and amount as value
+        // Format: [{"address_string": amount}, ...]
+        let outputs_json: Vec<Value> = outputs
+            .iter()
+            .map(|(addr, amount)| {
+                let mut output_obj = serde_json::Map::new();
+                output_obj.insert(addr.clone(), json!(amount));
+                json!(output_obj)
+            })
+            .collect();
 
-        let params = json!([inputs_json, outputs_map]);
+        let params = json!([inputs_json, outputs_json]);
         let result = self.call("createpsbt", params).await?;
         result.as_str()
             .map(|s| s.to_string())
