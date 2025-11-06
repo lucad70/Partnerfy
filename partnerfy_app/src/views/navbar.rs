@@ -14,6 +14,11 @@ pub fn Navbar() -> Element {
         div {
             id: "navbar",
             Link {
+                to: Route::LandingPage {},
+                style: "margin-right: auto;",
+                "🏠 Home"
+            }
+            Link {
                 to: Route::PromoterPage {},
                 "Promoter"
             }

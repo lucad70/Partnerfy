@@ -4,7 +4,7 @@
 
 use dioxus::prelude::*;
 
-use views::{Promoter as PromoterPage, Participant as ParticipantPage, Partner as PartnerPage, Navbar};
+use views::{Promoter as PromoterPage, Participant as ParticipantPage, Partner as PartnerPage, Navbar, Landing as LandingPage, Instructions as InstructionsPage};
 use app_core::{ElementsRPC, HalWrapper, Settings};
 
 /// Define a components module that contains all shared components for our app.
@@ -24,9 +24,14 @@ mod app_core;
 enum Route {
     // The layout attribute defines a wrapper for all routes under the layout. Layouts are great for wrapping
     // many routes with a common UI like a navbar.
+    // Landing page (no navbar)
+    #[route("/")]
+    LandingPage {},
+    #[route("/instructions")]
+    InstructionsPage {},
+    // Role-based pages (with navbar)
     #[layout(Navbar)]
-        // Default route redirects to Promoter
-        #[route("/")]
+        #[route("/promoter")]
         PromoterPage {},
         #[route("/participant")]
         ParticipantPage {},

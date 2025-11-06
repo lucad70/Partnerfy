@@ -6,6 +6,12 @@
 //! The [`Navbar`] component will be rendered on all pages of our app since every page is under the layout. The layout defines
 //! a common wrapper around all child routes.
 
+mod landing;
+pub use landing::Landing;
+
+mod instructions;
+pub use instructions::Instructions;
+
 mod promoter;
 pub use promoter::Promoter;
 
