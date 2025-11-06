@@ -35,7 +35,7 @@ impl HalWrapper {
     /// Compile a SimplicityHL source file (.simf) to base64
     /// 
     /// Runs: simc <input.simf>
-    /// Returns: The compiled base64 program string
+    /// Returns: The compiled base64 program string (from the last line of output)
     pub fn compile_simf(&self, input_path: &str) -> Result<String> {
         let output = Command::new(&self.simc_cmd())
             .arg(input_path)
@@ -53,11 +53,12 @@ impl HalWrapper {
         let stdout = String::from_utf8(output.stdout)
             .context("Invalid UTF-8 in simc output")?;
 
-        // Parse output: simc outputs "Program:\n<base64>\n"
-        // Extract the base64 program from the output
+        // Parse output: simc outputs multiple lines, the last line is the compiled program
+        // Extract the last non-empty line
         let program = stdout
             .lines()
-            .find(|line| !line.trim().is_empty() && !line.trim().starts_with("Program:"))
+            .rev()
+            .find(|line| !line.trim().is_empty())
             .ok_or_else(|| anyhow::anyhow!("Could not find program in simc output"))?
             .trim()
             .to_string();
@@ -69,13 +70,75 @@ impl HalWrapper {
         Ok(program)
     }
 
+    /// Compile a SimplicityHL source file with witness file
+    /// 
+    /// Runs: simc <input.simf> <witness.wit>
+    /// Returns: Tuple of (program, witness) as base64 strings
+    /// The output format is:
+    ///   Program:
+    ///   <program_base64>
+    ///   Witness:
+    ///   <witness_base64>
+    pub fn compile_simf_with_witness(&self, input_path: &str, witness_path: &str) -> Result<(String, String)> {
+        let output = Command::new(&self.simc_cmd())
+            .arg(input_path)
+            .arg(witness_path)
+            .output()
+            .context("Failed to execute simc compiler with witness")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!(
+                "simc compilation with witness failed: {}",
+                stderr
+            ));
+        }
+
+        let stdout = String::from_utf8(output.stdout)
+            .context("Invalid UTF-8 in simc output")?;
+
+        // Parse output: simc outputs:
+        //   Program:
+        //   <program_base64>
+        //   Witness:
+        //   <witness_base64>
+        let lines: Vec<&str> = stdout.lines().collect();
+        
+        // Find program line (line after "Program:")
+        let program_idx = lines.iter()
+            .position(|line| line.trim().starts_with("Program:"))
+            .ok_or_else(|| anyhow::anyhow!("Could not find 'Program:' in simc output"))?;
+        
+        let program = if program_idx + 1 < lines.len() {
+            lines[program_idx + 1].trim().to_string()
+        } else {
+            return Err(anyhow::anyhow!("Program line missing after 'Program:'"));
+        };
+
+        // Find witness line (line after "Witness:")
+        let witness_idx = lines.iter()
+            .position(|line| line.trim().starts_with("Witness:"))
+            .ok_or_else(|| anyhow::anyhow!("Could not find 'Witness:' in simc output"))?;
+        
+        let witness = if witness_idx + 1 < lines.len() {
+            lines[witness_idx + 1].trim().to_string()
+        } else {
+            return Err(anyhow::anyhow!("Witness line missing after 'Witness:'"));
+        };
+
+        if program.is_empty() || witness.is_empty() {
+            return Err(anyhow::anyhow!("Empty program or witness in simc output"));
+        }
+
+        Ok((program, witness))
+    }
+
     /// Get covenant info from compiled program
     /// 
     /// Runs: hal-simplicity simplicity info <program.base64>
     /// Returns: JSON string with CMR, address, etc.
     pub fn get_covenant_info(&self, program_base64: &str) -> Result<String> {
         let output = Command::new(&self.hal_cmd())
-            .arg("simplicity")
             .arg("simplicity")
             .arg("info")
             .arg(program_base64)

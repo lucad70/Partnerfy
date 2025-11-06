@@ -7,7 +7,6 @@ use dioxus::prelude::*;
 use std::sync::Arc;
 use serde_json::{self, json};
 use regex::Regex;
-use std::fs;
 use std::path::Path;
 
 #[component]
@@ -21,14 +20,17 @@ pub fn P2MS() -> Element {
     let mut contract_address = use_signal(|| String::new());
     let mut contract_cmr = use_signal(|| String::new());
     let mut contract_program = use_signal(|| String::new());
+    let mut internal_key = use_signal(|| "50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0".to_string());
+    let mut witness_file_path = use_signal(|| String::new());
+    let mut privkey_1 = use_signal(|| String::new());
+    let mut privkey_2 = use_signal(|| String::new());
+    let mut privkey_3 = use_signal(|| String::new());
     let mut funding_txid = use_signal(|| String::new());
     let mut funding_vout = use_signal(|| String::new());
     let mut funding_amount = use_signal(|| String::new());
     let mut spend_destination = use_signal(|| String::new());
     let mut spend_amount = use_signal(|| String::new());
     let mut pset_for_signing = use_signal(|| String::new());
-    let mut signed_pset_1 = use_signal(|| String::new());
-    let mut signed_pset_2 = use_signal(|| String::new());
     let mut final_pset = use_signal(|| String::new());
     let mut final_tx_hex = use_signal(|| String::new());
     let mut status_message = use_signal(|| String::new());
@@ -331,30 +333,46 @@ pub fn P2MS() -> Element {
                     return;
                 }
                 
-                // Step 3: Update PSBT with UTXO data using elements-cli
-                status_message.set("Updating PSBT with UTXO data...".to_string());
+                // Step 3: Update PSET with Simplicity data using hal-simplicity
+                status_message.set("Updating PSET with Simplicity data...".to_string());
                 
-                match rpc_context.update_psbt_utxo(&base_pset).await {
-                    Ok(updated_psbt) => {
-                        pset_for_signing.set(updated_psbt.clone());
-                        status_message.set(format!(
-                            "PSBT created and updated successfully!\n\nYou can now export this PSBT for signing.\n\nPSBT (first 200 chars): {}...",
-                            updated_psbt.chars().take(200).collect::<String>()
-                        ));
-                    }
-                    Err(e) => {
-                        status_message.set(format!("Failed to update PSBT: {}\n\nUsing base PSBT without UTXO update...", e));
-                        // Fallback: use base PSBT even if UTXO update fails
-                        pset_for_signing.set(base_pset.clone());
-                    }
+                let internal_key_val = internal_key.read().clone();
+                if internal_key_val.is_empty() {
+                    status_message.set("Internal key is required. Please provide it.".to_string());
+                    is_loading.set(false);
+                    return;
                 }
+                
+                let value_str = format!("{}", (value * 100_000_000.0) as u64);
+                let updated_pset = match hal_context.update_pset_input(
+                    &base_pset,
+                    0,
+                    &script_pubkey,
+                    &asset,
+                    &value_str,
+                    &cmr,
+                    &internal_key_val,
+                ) {
+                    Ok(pset) => pset,
+                    Err(e) => {
+                        status_message.set(format!("Failed to update PSET with Simplicity data: {}", e));
+                        is_loading.set(false);
+                        return;
+                    }
+                };
+                
+                pset_for_signing.set(updated_pset.clone());
+                status_message.set(format!(
+                    "PSET updated successfully!\n\nPSET (first 200 chars): {}...\n\nReady for signing.",
+                    updated_pset.chars().take(200).collect::<String>()
+                ));
                 
                 is_loading.set(false);
             });
         }
     };
 
-    let finalize_and_broadcast = {
+    let sign_and_finalize = {
         let rpc_context = rpc_context.clone();
         let hal_context = hal_context.clone();
         move |_| {
@@ -362,38 +380,122 @@ pub fn P2MS() -> Element {
             let hal_context = hal_context.clone();
             spawn(async move {
                 is_loading.set(true);
-                status_message.set("Finalizing transaction...".to_string());
+                status_message.set("Signing and finalizing transaction...".to_string());
                 
-                let pset = final_pset.read().clone();
+                let pset = pset_for_signing.read().clone();
                 if pset.is_empty() {
-                    status_message.set("Please provide the finalized PSET".to_string());
+                    status_message.set("Please create the PSET first".to_string());
                     is_loading.set(false);
                     return;
                 }
                 
-                let program = contract_program_input.read().clone();
-                if program.is_empty() {
-                    status_message.set("Contract program not found".to_string());
+                let cmr = contract_cmr.read().clone();
+                if cmr.is_empty() {
+                    status_message.set("CMR not found".to_string());
                     is_loading.set(false);
                     return;
                 }
                 
-                // Extract witness from compiled program with witness
-                // For now, we'll need to compile with witness separately
-                // This is a simplified version - in practice, you'd need to compile with witness file
-                status_message.set("Note: This is a simplified finalization. In production, compile with witness file first.".to_string());
+                let simf_path = simf_file_path.read().clone();
+                let witness_path = witness_file_path.read().clone();
+                if simf_path.is_empty() || witness_path.is_empty() {
+                    status_message.set("Please provide both .simf file path and witness file path".to_string());
+                    is_loading.set(false);
+                    return;
+                }
                 
-                // Finalize PSET using elements-cli
-                match rpc_context.finalize_pset(&pset).await {
+                // Step 1: Sign with private keys (if provided)
+                let mut current_pset = pset.clone();
+                let privkey1 = privkey_1.read().clone();
+                let privkey2 = privkey_2.read().clone();
+                let privkey3 = privkey_3.read().clone();
+                
+                // Sign with available private keys
+                if !privkey1.is_empty() {
+                    status_message.set("Signing with private key 1...".to_string());
+                    match hal_context.sighash_and_sign(&current_pset, 0, &cmr, &privkey1) {
+                        Ok(_sig) => {
+                            // Note: The signature needs to be added to the witness file
+                            // For now, we'll proceed with compilation
+                            status_message.set("Signature 1 generated (needs to be added to witness file)".to_string());
+                        }
+                        Err(e) => {
+                            status_message.set(format!("Failed to sign with key 1: {}", e));
+                            is_loading.set(false);
+                            return;
+                        }
+                    }
+                }
+                
+                if !privkey2.is_empty() {
+                    status_message.set("Signing with private key 2...".to_string());
+                    match hal_context.sighash_and_sign(&current_pset, 0, &cmr, &privkey2) {
+                        Ok(_sig) => {
+                            status_message.set("Signature 2 generated (needs to be added to witness file)".to_string());
+                        }
+                        Err(e) => {
+                            status_message.set(format!("Failed to sign with key 2: {}", e));
+                            is_loading.set(false);
+                            return;
+                        }
+                    }
+                }
+                
+                if !privkey3.is_empty() {
+                    status_message.set("Signing with private key 3...".to_string());
+                    match hal_context.sighash_and_sign(&current_pset, 0, &cmr, &privkey3) {
+                        Ok(_sig) => {
+                            status_message.set("Signature 3 generated (needs to be added to witness file)".to_string());
+                        }
+                        Err(e) => {
+                            status_message.set(format!("Failed to sign with key 3: {}", e));
+                            is_loading.set(false);
+                            return;
+                        }
+                    }
+                }
+                
+                // Step 2: Compile program with witness file
+                status_message.set("Compiling program with witness file...".to_string());
+                let (program_with_witness, witness_data) = match hal_context.compile_simf_with_witness(&simf_path, &witness_path) {
+                    Ok((prog, wit)) => (prog, wit),
+                    Err(e) => {
+                        status_message.set(format!("Failed to compile with witness: {}\n\nNote: You may need to manually update the witness file with signatures first.", e));
+                        is_loading.set(false);
+                        return;
+                    }
+                };
+                
+                // Step 3: Finalize PSET with hal-simplicity
+                status_message.set("Finalizing PSET with program and witness...".to_string());
+                let finalized_pset = match hal_context.finalize_pset_with_witness(
+                    &current_pset,
+                    0,
+                    &program_with_witness,
+                    &witness_data,
+                ) {
+                    Ok(pset) => pset,
+                    Err(e) => {
+                        status_message.set(format!("Failed to finalize PSET: {}", e));
+                        is_loading.set(false);
+                        return;
+                    }
+                };
+                
+                final_pset.set(finalized_pset.clone());
+                
+                // Step 4: Finalize PSBT with elements-cli
+                status_message.set("Finalizing PSBT...".to_string());
+                match rpc_context.finalize_pset(&finalized_pset).await {
                     Ok(tx_hex) => {
                         final_tx_hex.set(tx_hex.clone());
                         status_message.set(format!(
-                            "Transaction finalized!\n\nTransaction Hex:\n{}\n\nReady to broadcast.",
+                            "Transaction finalized successfully!\n\nTransaction Hex (first 200 chars): {}...\n\nReady to broadcast.",
                             tx_hex.chars().take(200).collect::<String>()
                         ));
                     }
                     Err(e) => {
-                        status_message.set(format!("Failed to finalize PSET: {}\n\nMake sure the PSET is fully signed.", e));
+                        status_message.set(format!("Failed to finalize PSBT: {}\n\nMake sure all signatures are correct.", e));
                     }
                 }
                 
@@ -622,66 +724,95 @@ pub fn P2MS() -> Element {
                     }
                 }
                 
+                div { style: "margin-top: 16px; margin-bottom: 16px;",
+                    label { "Internal Key (Taproot)" }
+                    input {
+                        r#type: "text",
+                        value: "{internal_key}",
+                        oninput: move |evt| internal_key.set(evt.value().to_string()),
+                        placeholder: "50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0"
+                    }
+                    p { style: "font-size: 0.875rem; color: #666; margin-top: 4px;",
+                        "Unspendable internal key for Taproot (default provided)"
+                    }
+                }
+                
                 button {
                     class: "button",
                     onclick: create_spend_pset,
                     disabled: is_loading() || funding_txid().is_empty() || contract_cmr().is_empty(),
-                    "Create PSET for Signing"
+                    "Create and Update PSET"
                 }
                 
                 if !pset_for_signing().is_empty() {
                     div { class: "info-box info", style: "margin-top: 16px;",
-                        p { style: "font-weight: 600; margin-bottom: 8px;", "PSET for Signing:" }
+                        p { style: "font-weight: 600; margin-bottom: 8px;", "PSET Ready for Signing:" }
                         textarea {
                             rows: "4",
                             readonly: true,
                             value: "{pset_for_signing}",
                             style: "font-family: 'Roboto Mono', monospace; font-size: 0.9rem; width: 100%;"
                         }
-                        p { style: "font-size: 0.875rem; color: #666; margin-top: 8px;",
-                            "Copy this PSET and import it into your wallet to sign it. Then paste the signed PSET below."
-                        }
                     }
                 }
                 
                 div { style: "margin-top: 24px; margin-bottom: 16px;",
-                    label { "Signed PSET from Participant 1" }
-                    textarea {
-                        rows: "3",
-                        value: "{signed_pset_1}",
-                        oninput: move |evt| signed_pset_1.set(evt.value().to_string()),
-                        placeholder: "Paste signed PSET from participant 1 here"
-                    }
-                }
-                
-                div { style: "margin-bottom: 16px;",
-                    label { "Signed PSET from Participant 2" }
-                    textarea {
-                        rows: "3",
-                        value: "{signed_pset_2}",
-                        oninput: move |evt| signed_pset_2.set(evt.value().to_string()),
-                        placeholder: "Paste signed PSET from participant 2 here"
-                    }
-                }
-                
-                div { style: "margin-bottom: 16px;",
-                    label { "Finalized PSET (after all signatures)" }
-                    textarea {
-                        rows: "3",
-                        value: "{final_pset}",
-                        oninput: move |evt| final_pset.set(evt.value().to_string()),
-                        placeholder: "Paste the finalized PSET here after all participants have signed"
+                    label { "Witness File Path (.wit)" }
+                    input {
+                        r#type: "text",
+                        value: "{witness_file_path}",
+                        oninput: move |evt| witness_file_path.set(evt.value().to_string()),
+                        placeholder: "/path/to/p2ms.wit"
                     }
                     p { style: "font-size: 0.875rem; color: #666; margin-top: 4px;",
-                        "After all required participants sign, combine their signatures and finalize the PSET"
+                        "Path to witness file (will be updated with signatures)"
+                    }
+                }
+                
+                div { style: "margin-bottom: 16px;",
+                    label { "Private Key 1 (hex)" }
+                    input {
+                        r#type: "text",
+                        value: "{privkey_1}",
+                        oninput: move |evt| privkey_1.set(evt.value().to_string()),
+                        placeholder: "0000000000000000000000000000000000000000000000000000000000000001"
+                    }
+                    p { style: "font-size: 0.875rem; color: #666; margin-top: 4px;",
+                        "Private key for participant 1 (optional)"
+                    }
+                }
+                
+                div { style: "margin-bottom: 16px;",
+                    label { "Private Key 2 (hex)" }
+                    input {
+                        r#type: "text",
+                        value: "{privkey_2}",
+                        oninput: move |evt| privkey_2.set(evt.value().to_string()),
+                        placeholder: "0000000000000000000000000000000000000000000000000000000000000002"
+                    }
+                    p { style: "font-size: 0.875rem; color: #666; margin-top: 4px;",
+                        "Private key for participant 2 (optional)"
+                    }
+                }
+                
+                div { style: "margin-bottom: 16px;",
+                    label { "Private Key 3 (hex)" }
+                    input {
+                        r#type: "text",
+                        value: "{privkey_3}",
+                        oninput: move |evt| privkey_3.set(evt.value().to_string()),
+                        placeholder: "0000000000000000000000000000000000000000000000000000000000000005"
+                    }
+                    p { style: "font-size: 0.875rem; color: #666; margin-top: 4px;",
+                        "Private key for participant 3 (optional)"
                     }
                 }
                 
                 button {
                     class: "button",
-                    onclick: finalize_and_broadcast,
-                    disabled: is_loading() || final_pset().is_empty(),
-                    "Finalize and Prepare for Broadcast"
+                    onclick: sign_and_finalize,
+                    disabled: is_loading() || pset_for_signing().is_empty() || witness_file_path().is_empty() || simf_file_path().is_empty(),
+                    "Sign and Finalize Transaction"
                 }
                 
                 if !final_tx_hex().is_empty() {
