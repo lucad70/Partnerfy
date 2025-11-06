@@ -40,3 +40,4 @@
 # - SimplicityHL documentation: https://github.com/ElementsProject/simplicity
 # - hal-simplicity examples: https://github.com/Blockstream/hal-simplicity
 
+fn main() {}

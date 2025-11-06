@@ -30,6 +30,7 @@ base64 = "0.22"
 # Logging
 tracing = "0.1"
 tracing-subscriber = "0.3"
+hal-simplicity = "0.1.0"
 
 [profile.release]
 opt-level = 3

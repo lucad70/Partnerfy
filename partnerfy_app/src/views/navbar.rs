@@ -30,6 +30,10 @@ pub fn Navbar() -> Element {
                 to: Route::PartnerPage {},
                 "Partner"
             }
+            Link {
+                to: Route::P2MSPage {},
+                "P2MS"
+            }
         }
 
         // The `Outlet` component is used to render the next component inside the layout.

@@ -21,5 +21,8 @@ pub use participant::Participant;
 mod partner;
 pub use partner::Partner;
 
+mod p2ms;
+pub use p2ms::P2MS;
+
 mod navbar;
 pub use navbar::Navbar;
