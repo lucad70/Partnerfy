@@ -1,0 +1,33 @@
+# Elements (Liquid) Node Configuration
+# Copy this file to ~/.elements/elements.conf or your elementsd data directory
+
+# Network
+chain=liquidtestnet
+
+# Server settings
+daemon=1
+server=1
+txindex=1
+listen=1
+
+# RPC settings
+rpcuser=user
+rpcpassword=pass
+rpcallowip=127.0.0.1
+rpcbind=127.0.0.1
+
+# RPC port (default: 18884 for liquidtestnet, 7041 for liquid mainnet)
+rpcport=18884
+
+# Optional: Enable JSON-RPC logging
+# rpcworkqueue=16
+# rpcthreads=16
+
+# Optional: Wallet settings
+# wallet=wallet.dat
+# walletpassphrase=your_password_here
+
+# Optional: Add trusted peers for faster sync
+# addnode=node1.example.com
+# addnode=node2.example.com
+
