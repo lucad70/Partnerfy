@@ -474,20 +474,21 @@ pub fn P2MS() -> Element {
                     return;
                 }
                 
-                // Format: HEX:ASSET:VALUE (value in sats, matching script)
-                // CRITICAL: The value must be in sats for hal-simplicity to build the correct message hash
-                // If the value is wrong, signatures will fail with "Assertion failed inside jet"
-                let value_str = value_sats.to_string();
+                // Format: HEX:ASSET:VALUE (value in BTC format, matching reference guide)
+                // According to the reference guide, hal-simplicity accepts value in BTC format (0.001)
+                // and converts internally. The guide shows: VALUE="0.001" for 100,000 sats
+                let value_btc = utxo_value_btc;
+                let value_str = format!("{:.8}", value_btc); // Format to 8 decimal places like BTC
                 
                 // Debug: Log the value being used (for troubleshooting)
                 status_message.set(format!(
                     "Updating PSET with Simplicity data...\n\
-                    Value: {} sats ({} L-BTC)\n\
+                    Value: {} L-BTC ({} sats)\n\
                     ScriptPubKey: {}...\n\
                     Asset: {}\n\
                     CMR: {}...",
+                    value_btc,
                     value_sats,
-                    value_sats as f64 / 100_000_000.0,
                     script_pubkey.chars().take(20).collect::<String>(),
                     asset,
                     cmr.chars().take(20).collect::<String>()
