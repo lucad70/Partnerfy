@@ -1,0 +1,6 @@
+{
+  "MAYBE_SIGS": {
+    "type": "[Option<Signature>; 3]",
+    "value": "[Some(0x3839f190d07a0e96ccecdcb2c5c780576e149149a9335cb5d0aa117809cca14e28533d1e74f35f3231feb23c9169c0015e8dcba27ba9bd0c829658657f7ee15c), Some(0xd7343e102e0cfbe06c0f99cb61db617edc69f7f95f1b88c22df8306273696ddfb5e619170558300f136d726bb9a5bff83ebff8dabeab1ff518030700fa91b441), None]"
+  }
+}
