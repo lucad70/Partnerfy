@@ -27,12 +27,6 @@ pub fn Instructions() -> Element {
                             style: "text-decoration: none; color: #00090C; font-size: 0.9rem; margin-right: 24px;",
                             "← Back"
                         }
-                        Link {
-                            to: crate::Route::PromoterPage {},
-                            class: "button",
-                            style: "font-size: 0.9rem; padding: 8px 16px;",
-                            "Get Started"
-                        }
                     }
                 }
             }
@@ -248,12 +242,18 @@ pub fn Instructions() -> Element {
                 }
 
                 // CTA
-                div { style: "text-align: center; margin-top: 48px; padding: 32px;",
+                div { style: "text-align: center; margin-top: 48px; padding: 32px; display: flex; gap: 16px; justify-content: center;",
                     Link {
-                        to: crate::Route::PromoterPage {},
+                        to: crate::Route::P2MSPage {},
                         class: "button",
                         style: "font-size: 1.125rem; padding: 16px 32px;",
-                        "Get Started →"
+                        "Multisig →"
+                    }
+                    Link {
+                        to: crate::Route::VoucherPage {},
+                        class: "button",
+                        style: "font-size: 1.125rem; padding: 16px 32px; background-color: transparent; border: 2px solid #00090C;",
+                        "Voucher"
                     }
                 }
             }

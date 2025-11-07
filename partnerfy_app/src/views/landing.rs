@@ -21,12 +21,6 @@ pub fn Landing() -> Element {
                             style: "text-decoration: none; color: #00090C; font-size: 0.9rem; transition: opacity 0.2s;",
                             "Instructions"
                         }
-                        Link {
-                            to: crate::Route::PromoterPage {},
-                            class: "button",
-                            style: "font-size: 0.9rem; padding: 8px 16px;",
-                            "Get Started"
-                        }
                     }
                 }
             }
@@ -46,16 +40,16 @@ pub fn Landing() -> Element {
                     }
                     div { style: "display: flex; flex-direction: row; gap: 16px; align-items: center; justify-content: center; flex-wrap: wrap;",
                         Link {
-                            to: crate::Route::PromoterPage {},
+                            to: crate::Route::P2MSPage {},
                             class: "button",
                             style: "font-size: 1.125rem; padding: 16px 32px;",
-                            "Start as Promoter →"
+                            "Multisig →"
                         }
                         Link {
-                            to: crate::Route::ParticipantPage {},
+                            to: crate::Route::VoucherPage {},
                             class: "button",
                             style: "font-size: 1.125rem; padding: 16px 32px; background-color: transparent; border: 2px solid #00090C;",
-                            "Start as Participant"
+                            "Voucher"
                         }
                     }
                 }

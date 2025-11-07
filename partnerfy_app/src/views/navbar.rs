@@ -19,18 +19,6 @@ pub fn Navbar() -> Element {
                 "🏠 Home"
             }
             Link {
-                to: Route::PromoterPage {},
-                "Promoter"
-            }
-            Link {
-                to: Route::ParticipantPage {},
-                "Participant"
-            }
-            Link {
-                to: Route::PartnerPage {},
-                "Partner"
-            }
-            Link {
                 to: Route::P2MSPage {},
                 "P2MS"
             }
