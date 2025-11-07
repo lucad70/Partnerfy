@@ -61,9 +61,9 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             rpc_host: "localhost".to_string(),
-            rpc_port: 18884, // Default Liquid Testnet RPC port
+            rpc_port: 18891, // Default Liquid Testnet RPC port
             rpc_user: "user".to_string(),
-            rpc_password: "pass".to_string(),
+            rpc_password: "password".to_string(),
             chain: "liquidtestnet".to_string(),
         }
     }
