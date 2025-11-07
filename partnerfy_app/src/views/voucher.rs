@@ -528,45 +528,76 @@ fn main() {{
                     return;
                 }
                 
-                // Note: The covenant enforces 3 outputs, but for simplicity we'll create a basic PSET
-                // The covenant will enforce the structure during finalization
-                let fee_sats = value_sats - amount_sats;
+                // Covenant requires exactly 3 outputs:
+                // Output 0: Payment to destination address
+                // Output 1: Same covenant script (recursive) - must be the contract address
+                // Output 2: Fee output
                 
-                if fee_sats == 0 {
-                    status_message.set(format!(
-                        "Fee is zero. You cannot spend the entire UTXO value without leaving room for fees.\n\nUTXO value: {} L-BTC ({} sats)\nSpend amount: {} L-BTC ({} sats)\n\nPlease reduce the spend amount to allow for a fee.",
-                        utxo_value_btc, value_sats, amount, amount_sats
-                    ));
-                    is_loading.set(false);
-                    return;
-                }
-                
+                // Calculate amounts for 3 outputs
                 const MIN_FEE_SATS: u64 = 100;
-                if fee_sats < MIN_FEE_SATS {
+                let fee_sats = MIN_FEE_SATS; // Use minimum fee
+                let change_sats = value_sats - amount_sats - fee_sats;
+                
+                if change_sats < 0 {
                     status_message.set(format!(
-                        "Fee {} sats ({} L-BTC) is too small (minimum recommended: {} sats / 0.00000100 L-BTC).\n\nUTXO value: {} L-BTC ({} sats)\nSpend amount: {} L-BTC ({} sats)\nCalculated fee: {} sats ({} L-BTC)\n\nPlease reduce the spend amount to allow for a reasonable fee.",
-                        fee_sats, fee_sats as f64 / 100_000_000.0, MIN_FEE_SATS,
-                        utxo_value_btc, value_sats, amount, amount_sats, fee_sats, fee_sats as f64 / 100_000_000.0
+                        "Insufficient funds. UTXO value {} L-BTC ({} sats) is less than payment {} L-BTC ({} sats) + fee {} L-BTC ({} sats).\n\nPlease reduce the spend amount.",
+                        utxo_value_btc, value_sats, amount, amount_sats, fee_sats as f64 / 100_000_000.0, fee_sats
                     ));
                     is_loading.set(false);
                     return;
                 }
                 
+                if change_sats == 0 {
+                    status_message.set(format!(
+                        "No change remaining. UTXO value {} L-BTC ({} sats) equals payment {} L-BTC ({} sats) + fee {} L-BTC ({} sats).\n\nThe covenant requires Output 1 to be the recursive covenant (change). Please reduce the spend amount to leave room for change.",
+                        utxo_value_btc, value_sats, amount, amount_sats, fee_sats as f64 / 100_000_000.0, fee_sats
+                    ));
+                    is_loading.set(false);
+                    return;
+                }
+                
+                let contract_addr = contract_address.read().clone();
+                if contract_addr.is_empty() {
+                    status_message.set("Contract address is required for recursive covenant output".to_string());
+                    is_loading.set(false);
+                    return;
+                }
+                
+                // Convert to BTC for API calls
                 let amount_btc = (amount_sats as f64 / 100_000_000.0 * 100_000_000.0).round() / 100_000_000.0;
+                let change_btc = (change_sats as f64 / 100_000_000.0 * 100_000_000.0).round() / 100_000_000.0;
                 let fee_btc = (fee_sats as f64 / 100_000_000.0 * 100_000_000.0).round() / 100_000_000.0;
                 
                 status_message.set(format!(
-                    "Creating base PSET with:\nUTXO value: {} L-BTC ({} sats)\nSpend amount: {} L-BTC ({} sats)\nFee: {} L-BTC ({} sats)\n\nNote: Covenant will enforce 3 outputs (payment, recursive, fee) during finalization.",
-                    utxo_value_btc, value_sats, amount_btc, amount_sats, fee_btc, fee_sats
+                    "Creating PSET with 3 outputs (covenant requirement):\n\
+                    UTXO value: {} L-BTC ({} sats)\n\
+                    Output 0 (Payment): {} L-BTC ({} sats) to {}\n\
+                    Output 1 (Recursive Covenant): {} L-BTC ({} sats) to {}\n\
+                    Output 2 (Fee): {} L-BTC ({} sats)",
+                    utxo_value_btc, value_sats,
+                    amount_btc, amount_sats, destination,
+                    change_btc, change_sats, contract_addr,
+                    fee_btc, fee_sats
                 ));
                 
+                // Create PSET with 3 outputs:
+                // Output 0: Payment address
+                // Output 1: Contract address (recursive covenant)
+                // Output 2: Fee (handled by create_pset with fee parameter)
                 let inputs = vec![(txid.clone(), vout)];
-                let outputs = vec![(destination.clone(), amount_btc)];
+                let outputs = vec![
+                    (destination.clone(), amount_btc),           // Output 0: Payment
+                    (contract_addr.clone(), change_btc),         // Output 1: Recursive covenant
+                ];
                 
+                // Note: create_pset adds fee as a separate output, so we'll have:
+                // Output 0: destination (payment)
+                // Output 1: contract_addr (recursive)
+                // Output 2: fee (added by create_pset)
                 let base_pset = match rpc_context.create_pset(&inputs, &outputs, Some(fee_btc)).await {
                     Ok(pset) => pset,
                     Err(e) => {
-                        status_message.set(format!("Failed to create base PSET with elements-cli: {}\n\nThis creates the initial PSET that will be updated with Simplicity data.", e));
+                        status_message.set(format!("Failed to create base PSET with elements-cli: {}\n\nThis creates the initial PSET with 3 outputs (payment, recursive covenant, fee).", e));
                         is_loading.set(false);
                         return;
                     }
@@ -602,10 +633,116 @@ fn main() {{
                 };
                 
                 pset_for_signing.set(updated_pset.clone());
-                status_message.set(format!(
-                    "PSET updated successfully!\n\nPSET (first 200 chars): {}...\n\nReady for signing.\n\nNote: The covenant will enforce 3 outputs during finalization.",
-                    updated_pset.chars().take(200).collect::<String>()
+                
+                // Decode PSET to show its structure
+                status_message.set("Decoding PSET to verify structure...".to_string());
+                let decoded_pset = match rpc_context.decode_pset(&updated_pset).await {
+                    Ok(decoded) => decoded,
+                    Err(e) => {
+                        status_message.set(format!(
+                            "PSET updated but failed to decode: {}\n\nPSET (first 200 chars): {}...\n\nContinuing anyway...",
+                            e,
+                            updated_pset.chars().take(200).collect::<String>()
+                        ));
+                        is_loading.set(false);
+                        return;
+                    }
+                };
+                
+                // Extract inputs and outputs from decoded PSET
+                let mut decoded_info = String::new();
+                decoded_info.push_str("PSET Decoded Successfully!\n\n");
+                
+                // Show inputs
+                if let Some(inputs) = decoded_pset.get("tx").and_then(|tx| tx.get("vin")).and_then(|v| v.as_array()) {
+                    decoded_info.push_str(&format!("INPUTS ({}):\n", inputs.len()));
+                    for (i, input) in inputs.iter().enumerate() {
+                        if let (Some(txid), Some(vout)) = (
+                            input.get("txid").and_then(|v| v.as_str()),
+                            input.get("vout").and_then(|v| v.as_u64())
+                        ) {
+                            decoded_info.push_str(&format!("  Input {}: txid={}, vout={}\n", i, txid, vout));
+                        }
+                    }
+                }
+                
+                // Show outputs
+                if let Some(outputs) = decoded_pset.get("tx").and_then(|tx| tx.get("vout")).and_then(|v| v.as_array()) {
+                    decoded_info.push_str(&format!("\nOUTPUTS ({}):\n", outputs.len()));
+                    for (i, output) in outputs.iter().enumerate() {
+                        let value = output.get("value").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let value_sats = (value * 100_000_000.0).round() as u64;
+                        
+                        // Try to get address from scriptPubKey
+                        let address = if let Some(script_pubkey) = output.get("scriptPubKey") {
+                            if let Some(addresses) = script_pubkey.get("addresses").and_then(|v| v.as_array()) {
+                                if let Some(addr) = addresses.first().and_then(|v| v.as_str()) {
+                                    addr.to_string()
+                                } else {
+                                    "N/A".to_string()
+                                }
+                            } else {
+                                // Check if it's a fee output (no address)
+                                if script_pubkey.get("type").and_then(|v| v.as_str()) == Some("fee") {
+                                    "FEE OUTPUT".to_string()
+                                } else {
+                                    "N/A".to_string()
+                                }
+                            }
+                        } else {
+                            "N/A".to_string()
+                        };
+                        
+                        // Check if it's a fee output
+                        let output_type = if address == "FEE OUTPUT" || output.get("fee").is_some() {
+                            "Fee"
+                        } else if i == 0 {
+                            "Payment"
+                        } else if i == 1 {
+                            "Recursive Covenant"
+                        } else {
+                            "Other"
+                        };
+                        
+                        decoded_info.push_str(&format!(
+                            "  Output {}: {} L-BTC ({} sats) to {} [{}]\n",
+                            i, value, value_sats, address, output_type
+                        ));
+                    }
+                } else {
+                    decoded_info.push_str("\nOUTPUTS: Could not decode outputs\n");
+                }
+                
+                // Show expected vs actual
+                decoded_info.push_str(&format!(
+                    "\nExpected Structure:\n\
+                    - Output 0: {} L-BTC to {} (Payment)\n\
+                    - Output 1: {} L-BTC to {} (Recursive Covenant)\n\
+                    - Output 2: {} L-BTC (Fee)\n",
+                    amount_btc, destination,
+                    change_btc, contract_addr,
+                    fee_btc
                 ));
+                
+                decoded_info.push_str("\nReady for signing. The covenant will verify this structure during finalization.");
+                
+                // Also show the full decoded JSON for debugging
+                decoded_info.push_str("\n\nFull Decoded PSET JSON:\n");
+                if let Ok(json_str) = serde_json::to_string_pretty(&decoded_pset) {
+                    // Limit to first 2000 chars to avoid overwhelming the UI
+                    let preview = if json_str.len() > 2000 {
+                        format!("{}...\n\n(truncated, full JSON has {} chars)", 
+                            json_str.chars().take(2000).collect::<String>(),
+                            json_str.len())
+                    } else {
+                        json_str
+                    };
+                    decoded_info.push_str(&preview);
+                } else {
+                    decoded_info.push_str("(Could not serialize decoded PSET)");
+                }
+                
+                status_message.set(decoded_info);
                 
                 is_loading.set(false);
             });
@@ -854,7 +991,7 @@ fn main() {{
                 
                 let _ = tokio::fs::remove_file(&temp_witness_path).await;
                 
-                status_message.set("Finalizing PSET with program and witness (covenant will enforce 3 outputs)...".to_string());
+                status_message.set("Finalizing PSET with program and witness (covenant will verify 3 outputs)...".to_string());
                 let finalized_pset = match hal_context.finalize_pset_with_witness(
                     &current_pset,
                     0,
@@ -867,18 +1004,20 @@ fn main() {{
                         let detailed_error = if error_msg.contains("Jet failed") || error_msg.contains("failed during execution") {
                             format!(
                                 "Failed to finalize PSET: {}\n\n\
-                                This error ('Jet failed during execution') typically means:\n\
-                                1. Signatures don't match the public keys in the program\n\
-                                2. Private keys don't correspond to the public keys\n\
-                                3. Covenant structure not satisfied (must have exactly 3 outputs)\n\
-                                4. Output 1 must be the same script (recursive covenant)\n\
-                                5. Output 2 must be a fee output\n\
-                                6. You need exactly 2 valid signatures for 2-of-3 multisig\n\n\
+                                This error ('Jet failed during execution') typically means the covenant structure is not satisfied.\n\n\
+                                The covenant requires exactly 3 outputs:\n\
+                                1. Output 0: Payment to any address (your destination)\n\
+                                2. Output 1: Same covenant script (recursive) - must be the contract address\n\
+                                3. Output 2: Fee output\n\n\
+                                Other possible causes:\n\
+                                - Signatures don't match the public keys in the program\n\
+                                - Private keys don't correspond to the public keys\n\
+                                - You need exactly 2 valid signatures for 2-of-3 multisig\n\n\
                                 Check:\n\
                                 - Private keys match the public keys in your cov_p2ms.simf file\n\
                                 - You provided at least 2 private keys\n\
-                                - The transaction has exactly 3 outputs\n\
-                                - Output 1 is the same covenant script\n\
+                                - The PSET was created with 3 outputs (payment, recursive covenant, fee)\n\
+                                - Output 1 is the contract address (same script)\n\
                                 - Output 2 is marked as fee",
                                 error_msg
                             )

@@ -623,6 +623,66 @@ impl ElementsRPC {
         }
     }
 
+    /// Decode a PSET/PSBT to see its structure
+    /// Uses elements-cli decodepsbt
+    pub async fn decode_pset(&self, pset: &str) -> Result<Value> {
+        let cmd = self.elements_cli_cmd();
+        let output = match Command::new(&cmd)
+            .arg("decodepsbt")
+            .arg(pset)
+            .output()
+            .await
+        {
+            Ok(o) => o,
+            Err(e) => {
+                let error_kind = e.kind();
+                let error_msg = if error_kind == std::io::ErrorKind::NotFound {
+                    format!(
+                        "elements-cli command not found at: {}\n\nTroubleshooting:\n1. Check if elements-cli is installed: which elements-cli\n2. Try finding it: find /usr /opt ~/.cargo -name 'elements-cli' 2>/dev/null\n\nOriginal error: {}",
+                        cmd, e
+                    )
+                } else {
+                    format!(
+                        "Failed to execute {} decodepsbt\n\nOriginal error: {}",
+                        cmd, e
+                    )
+                };
+                return Err(anyhow::anyhow!(error_msg));
+            }
+        };
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let exit_code = output.status.code().unwrap_or(-1);
+            
+            let error_details = format!(
+                "{} decodepsbt failed with exit code {}\n\nCommand: {} decodepsbt\nPSET (first 200 chars): {}...\n\nStderr:\n{}\n\nStdout:\n{}",
+                cmd,
+                exit_code,
+                cmd,
+                pset.chars().take(200).collect::<String>(),
+                stderr,
+                stdout
+            );
+            
+            return Err(anyhow::anyhow!(error_details));
+        }
+
+        let stdout = String::from_utf8(output.stdout)
+            .context("Invalid UTF-8 in elements-cli output")?;
+        
+        match serde_json::from_str(&stdout) {
+            Ok(json) => Ok(json),
+            Err(e) => {
+                Err(anyhow::anyhow!(
+                    "Failed to parse decodepsbt JSON response: {}\n\nCommand: {} decodepsbt\n\nRaw stdout:\n{}\n\nExpected JSON response",
+                    e, cmd, stdout.chars().take(500).collect::<String>()
+                ))
+            }
+        }
+    }
+
     /// Get settings reference
     pub fn settings(&self) -> &Settings {
         &self.settings
