@@ -40,6 +40,128 @@ pub fn P2MS() -> Element {
     let rpc_context = consume_context::<Arc<ElementsRPC>>();
     let hal_context = consume_context::<Arc<HalWrapper>>();
 
+    // Generate p2ms.simf file with custom pubkeys
+    let generate_simf = {
+        move |_| {
+            spawn(async move {
+                is_loading.set(true);
+                status_message.set("Generating p2ms.simf file with custom pubkeys...".to_string());
+                
+                let pk1 = pubkey_1.read().clone().trim().to_lowercase();
+                let pk2 = pubkey_2.read().clone().trim().to_lowercase();
+                let pk3 = pubkey_3.read().clone().trim().to_lowercase();
+                
+                // Validate pubkeys are provided
+                if pk1.is_empty() || pk2.is_empty() || pk3.is_empty() {
+                    status_message.set("Please provide all three public keys".to_string());
+                    is_loading.set(false);
+                    return;
+                }
+                
+                // Validate pubkeys are valid hex (64 characters = 32 bytes)
+                let is_valid_hex = |s: &str| {
+                    s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
+                };
+                
+                if !is_valid_hex(&pk1) {
+                    status_message.set(format!("Invalid public key 1: must be 64 hex characters (32 bytes). Got: {} ({} chars)", pk1, pk1.len()));
+                    is_loading.set(false);
+                    return;
+                }
+                
+                if !is_valid_hex(&pk2) {
+                    status_message.set(format!("Invalid public key 2: must be 64 hex characters (32 bytes). Got: {} ({} chars)", pk2, pk2.len()));
+                    is_loading.set(false);
+                    return;
+                }
+                
+                if !is_valid_hex(&pk3) {
+                    status_message.set(format!("Invalid public key 3: must be 64 hex characters (32 bytes). Got: {} ({} chars)", pk3, pk3.len()));
+                    is_loading.set(false);
+                    return;
+                }
+                
+                // Get the output file path
+                let output_path = simf_file_path.read().clone();
+                if output_path.is_empty() {
+                    status_message.set("Please enter a path for the .simf file".to_string());
+                    is_loading.set(false);
+                    return;
+                }
+                
+                // Generate the simf file content
+                let simf_content = format!(
+                    r#"/*
+ * PAY TO MULTISIG
+ *
+ * The coins move if 2 of 3 people agree to move them. These people provide
+ * their signatures, of which exactly 2 are required.
+ *
+ * https://docs.ivylang.org/bitcoin/language/ExampleContracts.html#lockwithmultisig
+ */
+fn not(bit: bool) -> bool {{
+    <u1>::into(jet::complement_1(<bool>::into(bit)))
+}}
+
+fn checksig(pk: Pubkey, sig: Signature) {{
+    let msg: u256 = jet::sig_all_hash();
+    jet::bip_0340_verify((pk, msg), sig);
+}}
+
+fn checksig_add(counter: u8, pk: Pubkey, maybe_sig: Option<Signature>) -> u8 {{
+    match maybe_sig {{
+        Some(sig: Signature) => {{
+            checksig(pk, sig);
+            let (carry, new_counter): (bool, u8) = jet::increment_8(counter);
+            assert!(not(carry));
+            new_counter
+        }}
+        None => counter,
+    }}
+}}
+
+fn check2of3multisig(pks: [Pubkey; 3], maybe_sigs: [Option<Signature>; 3]) {{
+    let [pk1, pk2, pk3]: [Pubkey; 3] = pks;
+    let [sig1, sig2, sig3]: [Option<Signature>; 3] = maybe_sigs;
+
+    let counter1: u8 = checksig_add(0, pk1, sig1);
+    let counter2: u8 = checksig_add(counter1, pk2, sig2);
+    let counter3: u8 = checksig_add(counter2, pk3, sig3);
+
+    let threshold: u8 = 2;
+    assert!(jet::eq_8(counter3, threshold));
+}}
+
+fn main() {{
+    let pks: [Pubkey; 3] = [
+        0x{}, // Participant 1
+        0x{}, // Participant 2
+        0x{}, // Participant 3
+    ];
+    check2of3multisig(pks, witness::MAYBE_SIGS);
+}}
+"#,
+                    pk1, pk2, pk3
+                );
+                
+                // Write the file
+                match tokio::fs::write(&output_path, &simf_content).await {
+                    Ok(_) => {
+                        status_message.set(format!(
+                            "Successfully generated p2ms.simf file!\n\nFile: {}\n\nPublic Keys:\n- Participant 1: 0x{}\n- Participant 2: 0x{}\n- Participant 3: 0x{}\n\nYou can now compile this file.",
+                            output_path, pk1, pk2, pk3
+                        ));
+                    }
+                    Err(e) => {
+                        status_message.set(format!("Failed to write simf file: {}\n\nPath: {}", e, output_path));
+                    }
+                }
+                
+                is_loading.set(false);
+            });
+        }
+    };
+
     // Compile .simf file
     let compile_simf = {
         let hal_context = hal_context.clone();
@@ -1005,7 +1127,70 @@ pub fn P2MS() -> Element {
             h1 { style: "font-size: 2rem; margin-bottom: 24px;", "P2MS Workflow" }
             
             div { class: "panel-section",
-                h2 { "0. Compile Simplicity Source (Optional)" }
+                h2 { "0. Generate P2MS Simplicity Source File" }
+                
+                div { style: "margin-bottom: 16px;",
+                    label { "Simplicity Source File (.simf) Output Path" }
+                    input {
+                        r#type: "text",
+                        value: "{simf_file_path}",
+                        oninput: move |evt| simf_file_path.set(evt.value().to_string()),
+                        placeholder: "/path/to/p2ms.simf"
+                    }
+                    p { style: "font-size: 0.875rem; color: #666; margin-top: 4px;",
+                        "Enter the full path where the .simf file will be generated"
+                    }
+                }
+                
+                div { style: "margin-bottom: 16px;",
+                    label { "Public Key 1 (Participant 1) - 64 hex characters" }
+                    input {
+                        r#type: "text",
+                        value: "{pubkey_1}",
+                        oninput: move |evt| pubkey_1.set(evt.value().to_string()),
+                        placeholder: "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+                    }
+                    p { style: "font-size: 0.875rem; color: #666; margin-top: 4px;",
+                        "32-byte public key in hex format (64 characters)"
+                    }
+                }
+                
+                div { style: "margin-bottom: 16px;",
+                    label { "Public Key 2 (Participant 2) - 64 hex characters" }
+                    input {
+                        r#type: "text",
+                        value: "{pubkey_2}",
+                        oninput: move |evt| pubkey_2.set(evt.value().to_string()),
+                        placeholder: "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
+                    }
+                    p { style: "font-size: 0.875rem; color: #666; margin-top: 4px;",
+                        "32-byte public key in hex format (64 characters)"
+                    }
+                }
+                
+                div { style: "margin-bottom: 16px;",
+                    label { "Public Key 3 (Participant 3) - 64 hex characters" }
+                    input {
+                        r#type: "text",
+                        value: "{pubkey_3}",
+                        oninput: move |evt| pubkey_3.set(evt.value().to_string()),
+                        placeholder: "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
+                    }
+                    p { style: "font-size: 0.875rem; color: #666; margin-top: 4px;",
+                        "32-byte public key in hex format (64 characters)"
+                    }
+                }
+                
+                button {
+                    class: "button",
+                    onclick: generate_simf,
+                    disabled: is_loading(),
+                    "Generate p2ms.simf File"
+                }
+            }
+            
+            div { class: "panel-section",
+                h2 { "1. Compile Simplicity Source (Optional)" }
                 
                 div { style: "margin-bottom: 16px;",
                     label { "Simplicity Source File (.simf)" }
@@ -1029,7 +1214,7 @@ pub fn P2MS() -> Element {
             }
             
             div { class: "panel-section",
-                h2 { "1. Create P2MS Contract Address" }
+                h2 { "2. Create P2MS Contract Address" }
                 
                 div { style: "margin-bottom: 16px;",
                     label { "Compiled Simplicity Program (base64) - Required" }
@@ -1041,36 +1226,6 @@ pub fn P2MS() -> Element {
                     }
                     p { style: "font-size: 0.875rem; color: #666; margin-top: 4px;",
                         "Paste the base64-encoded compiled Simplicity program"
-                    }
-                }
-                
-                div { style: "margin-bottom: 16px;",
-                    label { "Public Key 1 (Participant 1)" }
-                    input {
-                        r#type: "text",
-                        value: "{pubkey_1}",
-                        oninput: move |evt| pubkey_1.set(evt.value().to_string()),
-                        placeholder: "Enter public key hash for participant 1"
-                    }
-                }
-                
-                div { style: "margin-bottom: 16px;",
-                    label { "Public Key 2 (Participant 2)" }
-                    input {
-                        r#type: "text",
-                        value: "{pubkey_2}",
-                        oninput: move |evt| pubkey_2.set(evt.value().to_string()),
-                        placeholder: "Enter public key hash for participant 2"
-                    }
-                }
-                
-                div { style: "margin-bottom: 16px;",
-                    label { "Public Key 3 (Participant 3)" }
-                    input {
-                        r#type: "text",
-                        value: "{pubkey_3}",
-                        oninput: move |evt| pubkey_3.set(evt.value().to_string()),
-                        placeholder: "Enter public key hash for participant 3"
                     }
                 }
                 
@@ -1113,7 +1268,7 @@ pub fn P2MS() -> Element {
             }
             
             div { class: "panel-section",
-                h2 { "2. Fund Contract Address via Faucet" }
+                h2 { "3. Fund Contract Address via Faucet" }
                 
                 div { style: "margin-bottom: 16px;",
                     label { "Contract Address" }
@@ -1173,7 +1328,7 @@ pub fn P2MS() -> Element {
             }
             
             div { id: "spend-p2ms", class: "panel-section",
-                h2 { "3. Create Spending PSET" }
+                h2 { "4. Create Spending PSET" }
                 
                 div { style: "margin-bottom: 16px;",
                     label { "Destination Address" }
