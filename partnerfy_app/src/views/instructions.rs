@@ -37,7 +37,7 @@ pub fn Instructions() -> Element {
                     "Instructions"
                 }
                 p { style: "font-size: 1.125rem; color: #666; margin-bottom: 48px; line-height: 1.6;",
-                    "Follow these steps to use Partnerfy for managing covenant-based vouchers on Liquid Testnet."
+                    "Partnerfy provides two workflows for working with Simplicity contracts on Liquid Testnet: Multisig (P2MS) and Voucher (P2MS with Covenant)."
                 }
 
                 // Prerequisites
@@ -53,133 +53,137 @@ pub fn Instructions() -> Element {
                     }
                 }
 
-                // Promoter Instructions
+                // P2MS Instructions
                 div { class: "panel-section", style: "margin-bottom: 32px;",
                     h2 { style: "font-size: 1.75rem; font-weight: 600; margin-bottom: 16px; color: #00090C;",
-                        "For Promoters"
+                        "Multisig (P2MS) Workflow"
+                    }
+                    p { style: "color: #666; margin-bottom: 24px; line-height: 1.6;",
+                        "Create a 2-of-3 multisig contract where funds can be spent with signatures from any 2 of 3 participants."
                     }
                     div { style: "display: flex; flex-direction: column; gap: 24px;",
                         div {
                             h3 { style: "font-size: 1.25rem; font-weight: 600; margin-bottom: 8px; color: #00090C;",
-                                "1. Compile Covenant"
+                                "0. Generate P2MS Simplicity Source File"
                             }
                             p { style: "color: #666; margin-bottom: 8px; line-height: 1.6;",
-                                "Write your Simplicity covenant in voucher.simf, then compile it:"
-                            }
-                            pre { style: "background-color: #f5f5f5; padding: 16px; border-radius: 5px; font-family: 'Roboto Mono', monospace; font-size: 0.9rem; overflow-x: auto;",
-                                "simc voucher.simf -o voucher.base64"
+                                "Enter the output path for your .simf file and provide three 32-byte public keys (64 hex characters each) for the three participants. Click 'Generate p2ms.simf File' to create the Simplicity source file."
                             }
                         }
                         div {
                             h3 { style: "font-size: 1.25rem; font-weight: 600; margin-bottom: 8px; color: #00090C;",
-                                "2. Load Covenant Info"
+                                "1. Compile Simplicity Source (Optional)"
                             }
                             p { style: "color: #666; margin-bottom: 8px; line-height: 1.6;",
-                                "In the Promoter panel, click 'Load Covenant Info' to extract the covenant address."
+                                "Enter the path to your .simf file and click 'Compile .simf File'. The compiled program (base64) will be displayed. You can also paste a pre-compiled program directly in the next step."
                             }
                         }
                         div {
                             h3 { style: "font-size: 1.25rem; font-weight: 600; margin-bottom: 8px; color: #00090C;",
-                                "3. Fund Covenant Pool"
+                                "2. Create P2MS Contract Address"
                             }
                             p { style: "color: #666; margin-bottom: 8px; line-height: 1.6;",
-                                "Enter the funding amount and click 'Fund Covenant' to send LBTC to the covenant address."
+                                "Paste the compiled Simplicity program (base64) and click 'Create Contract Address'. The app will generate a contract address and CMR (Contract Merkle Root) that you can use to receive funds."
                             }
                         }
                         div {
                             h3 { style: "font-size: 1.25rem; font-weight: 600; margin-bottom: 8px; color: #00090C;",
-                                "4. Issue Vouchers"
+                                "3. Fund Contract Address via Faucet"
                             }
                             p { style: "color: #666; margin-bottom: 8px; line-height: 1.6;",
-                                "Enter comma-separated voucher amounts (e.g., '0.01, 0.01, 0.01') and click 'Create Vouchers' to split the funding into individual vouchers."
+                                "Enter the amount you want to request (default: 0.001 L-BTC) and click 'Fund via Faucet'. The app will automatically request funds from the Liquid Testnet faucet and display the funding transaction ID and VOUT."
+                            }
+                        }
+                        div {
+                            h3 { style: "font-size: 1.25rem; font-weight: 600; margin-bottom: 8px; color: #00090C;",
+                                "4. Create Spending PSET"
+                            }
+                            p { style: "color: #666; margin-bottom: 8px; line-height: 1.6;",
+                                "Enter the destination address and amount you want to spend. Provide the internal key (Taproot key, default provided) and click 'Create and Update PSET'. The app will create a PSET ready for signing."
+                            }
+                        }
+                        div {
+                            h3 { style: "font-size: 1.25rem; font-weight: 600; margin-bottom: 8px; color: #00090C;",
+                                "5. Sign and Finalize Transaction"
+                            }
+                            p { style: "color: #666; margin-bottom: 8px; line-height: 1.6;",
+                                "Provide the witness file path (.wit) and at least 2 of the 3 private keys corresponding to the public keys in your contract. Click 'Sign and Finalize Transaction' to generate signatures, update the witness file, and finalize the PSET."
+                            }
+                        }
+                        div {
+                            h3 { style: "font-size: 1.25rem; font-weight: 600; margin-bottom: 8px; color: #00090C;",
+                                "6. Broadcast Transaction"
+                            }
+                            p { style: "color: #666; margin-bottom: 8px; line-height: 1.6;",
+                                "Once the transaction is finalized, click 'Broadcast Transaction' to send it to the Liquid Network. You'll receive a transaction ID and a link to view it on the Blockstream explorer."
                             }
                         }
                     }
                 }
 
-                // Participant Instructions
+                // Voucher Instructions
                 div { class: "panel-section", style: "margin-bottom: 32px;",
                     h2 { style: "font-size: 1.75rem; font-weight: 600; margin-bottom: 16px; color: #00090C;",
-                        "For Participants"
+                        "Voucher (P2MS with Covenant) Workflow"
+                    }
+                    p { style: "color: #666; margin-bottom: 24px; line-height: 1.6;",
+                        "Create a 2-of-3 multisig contract with a covenant that enforces exactly 3 outputs: payment, recursive covenant (change), and fee. This ensures that change automatically returns to the same covenant."
                     }
                     div { style: "display: flex; flex-direction: column; gap: 24px;",
                         div {
                             h3 { style: "font-size: 1.25rem; font-weight: 600; margin-bottom: 8px; color: #00090C;",
-                                "1. Import Voucher"
+                                "0. Generate Voucher Simplicity Source File"
                             }
                             p { style: "color: #666; margin-bottom: 8px; line-height: 1.6;",
-                                "Click 'Import Voucher' and provide the voucher UTXO information (txid:vout) and covenant details from the promoter."
+                                "Enter the output path for your .simf file and provide three 32-byte public keys (64 hex characters each) for the three participants. Click 'Generate cov_p2ms.simf File' to create the Simplicity source file with covenant structure."
                             }
                         }
                         div {
                             h3 { style: "font-size: 1.25rem; font-weight: 600; margin-bottom: 8px; color: #00090C;",
-                                "2. Select Voucher & Partner"
+                                "1. Compile Simplicity Source (Optional)"
                             }
                             p { style: "color: #666; margin-bottom: 8px; line-height: 1.6;",
-                                "Select a voucher from your list, then enter the partner's P2PKH address where you want to redeem."
+                                "Enter the path to your .simf file and click 'Compile .simf File'. The compiled program (base64) will be displayed. You can also paste a pre-compiled program directly in the next step."
                             }
                         }
                         div {
                             h3 { style: "font-size: 1.25rem; font-weight: 600; margin-bottom: 8px; color: #00090C;",
-                                "3. Build & Sign Transaction"
+                                "2. Create Voucher Contract Address"
                             }
                             p { style: "color: #666; margin-bottom: 8px; line-height: 1.6;",
-                                "Enter the redemption amount and click 'Redeem Voucher'. The app will build a transaction with outputs to the partner and change back to the covenant. Sign the transaction with your witness."
+                                "Paste the compiled Simplicity program (base64) and click 'Create Contract Address'. The app will generate a contract address and CMR. This covenant enforces 3 outputs: payment, recursive covenant, and fee."
                             }
                         }
                         div {
                             h3 { style: "font-size: 1.25rem; font-weight: 600; margin-bottom: 8px; color: #00090C;",
-                                "4. Send to Partner"
+                                "3. Fund Contract Address via Faucet"
                             }
                             p { style: "color: #666; margin-bottom: 8px; line-height: 1.6;",
-                                "Send the signed transaction hex to the partner for validation and co-signature."
-                            }
-                        }
-                    }
-                }
-
-                // Partner Instructions
-                div { class: "panel-section", style: "margin-bottom: 32px;",
-                    h2 { style: "font-size: 1.75rem; font-weight: 600; margin-bottom: 16px; color: #00090C;",
-                        "For Partners"
-                    }
-                    div { style: "display: flex; flex-direction: column; gap: 24px;",
-                        div {
-                            h3 { style: "font-size: 1.25rem; font-weight: 600; margin-bottom: 8px; color: #00090C;",
-                                "1. Set Your Address"
-                            }
-                            p { style: "color: #666; margin-bottom: 8px; line-height: 1.6;",
-                                "Enter your P2PKH address in the Partner panel."
+                                "Enter the amount you want to request (default: 0.001 L-BTC) and click 'Fund via Faucet'. The app will automatically request funds from the Liquid Testnet faucet and display the funding transaction ID and VOUT."
                             }
                         }
                         div {
                             h3 { style: "font-size: 1.25rem; font-weight: 600; margin-bottom: 8px; color: #00090C;",
-                                "2. Receive Transaction"
+                                "4. Create Spending PSET"
                             }
                             p { style: "color: #666; margin-bottom: 8px; line-height: 1.6;",
-                                "Receive the transaction hex from the participant and paste it into the 'Transaction Hex' field."
+                                "Enter the destination address and amount you want to spend. The covenant requires exactly 3 outputs: Output 0 (payment), Output 1 (recursive covenant/change), and Output 2 (fee). Provide the internal key and click 'Create and Update PSET'. The app will verify the structure matches the covenant requirements."
                             }
                         }
                         div {
                             h3 { style: "font-size: 1.25rem; font-weight: 600; margin-bottom: 8px; color: #00090C;",
-                                "3. Validate Transaction"
+                                "5. Sign and Finalize Transaction"
                             }
                             p { style: "color: #666; margin-bottom: 8px; line-height: 1.6;",
-                                "Click 'Validate Transaction' to verify it complies with covenant rules:"
-                            }
-                            ul { class: "rules-list", style: "margin-top: 8px;",
-                                li { "Input references a valid voucher covenant UTXO" }
-                                li { "At least one output pays to your partner address" }
-                                li { "Change output is locked by the same covenant" }
-                                li { "Transaction includes valid signatures" }
+                                "Provide the witness file path (.wit) and at least 2 of the 3 private keys corresponding to the public keys in your contract. Click 'Sign and Finalize Transaction' to generate signatures, update the witness file, and finalize the PSET. The covenant will verify the 3-output structure during finalization."
                             }
                         }
                         div {
                             h3 { style: "font-size: 1.25rem; font-weight: 600; margin-bottom: 8px; color: #00090C;",
-                                "4. Broadcast Transaction"
+                                "6. Broadcast Transaction"
                             }
                             p { style: "color: #666; margin-bottom: 8px; line-height: 1.6;",
-                                "If validation passes, click 'Broadcast Transaction' to send it to the Liquid Network."
+                                "Once the transaction is finalized, click 'Broadcast Transaction' to send it to the Liquid Network. The covenant ensures that change (Output 1) automatically returns to the same covenant, maintaining the spending restrictions."
                             }
                         }
                     }
@@ -195,10 +199,12 @@ pub fn Instructions() -> Element {
                         p { style: "font-size: 0.9rem;", "Never use mainnet until you've thoroughly tested all functionality." }
                     }
                     ul { class: "rules-list",
-                        li { "Store private keys securely and encrypted locally" }
-                        li { "Validate witness correctness before broadcasting transactions" }
-                        li { "Keep an off-chain log of vouchers and redemption events" }
-                        li { "Verify covenant recursion: each child UTXO's script should match the parent's covenant hash" }
+                        li { "Store private keys securely and encrypted locally - never share them" }
+                        li { "Ensure private keys match the public keys in your contract (privkey_1 → pk1, privkey_2 → pk2, privkey_3 → pk3)" }
+                        li { "For 2-of-3 multisig, you need at least 2 valid signatures from the 3 participants" }
+                        li { "Signatures are PSET-specific - if you modify the PSET after signing, you must sign again" }
+                        li { "For Voucher contracts, ensure the spending transaction has exactly 3 outputs: payment, recursive covenant, and fee" }
+                        li { "Always test on Liquid Testnet first before using mainnet" }
                     }
                 }
 
@@ -260,4 +266,5 @@ pub fn Instructions() -> Element {
         }
     }
 }
+
 
