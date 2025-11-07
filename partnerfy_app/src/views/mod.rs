@@ -24,5 +24,8 @@ pub use partner::Partner;
 mod p2ms;
 pub use p2ms::P2MS;
 
+mod voucher;
+pub use voucher::Voucher;
+
 mod navbar;
 pub use navbar::Navbar;

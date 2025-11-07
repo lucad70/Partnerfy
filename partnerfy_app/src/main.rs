@@ -4,7 +4,7 @@
 
 use dioxus::prelude::*;
 
-use views::{Promoter as PromoterPage, Participant as ParticipantPage, Partner as PartnerPage, P2MS as P2MSPage, Navbar, Landing as LandingPage, Instructions as InstructionsPage};
+use views::{Promoter as PromoterPage, Participant as ParticipantPage, Partner as PartnerPage, P2MS as P2MSPage, Voucher as VoucherPage, Navbar, Landing as LandingPage, Instructions as InstructionsPage};
 use app_core::{ElementsRPC, HalWrapper, Settings};
 
 /// Define a components module that contains all shared components for our app.
@@ -39,6 +39,8 @@ enum Route {
         PartnerPage {},
         #[route("/p2ms")]
         P2MSPage {},
+        #[route("/voucher")]
+        VoucherPage {},
 }
 
 // We can import assets in dioxus with the `asset!` macro. This macro takes a path to an asset relative to the crate root.
