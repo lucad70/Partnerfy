@@ -4,7 +4,7 @@
 
 use dioxus::prelude::*;
 
-use views::{Promoter as PromoterPage, Participant as ParticipantPage, Partner as PartnerPage, P2MS as P2MSPage, Voucher as VoucherPage, Navbar, Landing as LandingPage, Instructions as InstructionsPage};
+use views::{P2MS as P2MSPage, Voucher as VoucherPage, Navbar, Landing as LandingPage, Instructions as InstructionsPage};
 use app_core::{ElementsRPC, HalWrapper, Settings};
 
 /// Define a components module that contains all shared components for our app.
@@ -31,12 +31,6 @@ enum Route {
     InstructionsPage {},
     // Role-based pages (with navbar)
     #[layout(Navbar)]
-        #[route("/promoter")]
-        PromoterPage {},
-        #[route("/participant")]
-        ParticipantPage {},
-        #[route("/partner")]
-        PartnerPage {},
         #[route("/p2ms")]
         P2MSPage {},
         #[route("/voucher")]
