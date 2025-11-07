@@ -29,14 +29,13 @@ pub fn Landing() -> Element {
             section { style: "max-width: 1200px; margin: 0 auto; padding: 80px 24px; text-align: center;",
                 div { style: "max-width: 800px; margin: 0 auto;",
                     div { style: "display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px; border-radius: 9999px; background-color: rgba(0, 9, 12, 0.1); color: #00090C; font-size: 0.875rem; font-weight: 500; margin-bottom: 24px;",
-                        "⚡"
                         "Powered by Liquid Network"
                     }
                     h1 { style: "font-size: 3rem; font-weight: 700; margin-bottom: 24px; line-height: 1.2; color: #00090C;",
                         "Simplify your Liquid Event"
                     }
                     p { style: "font-size: 1.25rem; color: #666; margin-bottom: 40px; max-width: 600px; margin-left: auto; margin-right: auto; line-height: 1.6;",
-                        "Send restricted LBTC to event participants that can only be spent at pre-approved partners. Secure, transparent, and powered by covenants."
+                        "Send restricted LBTC to event participants that can only be spent with pre-approved partners. Secure, transparent, and powered by SimplicityHL."
                     }
                     div { style: "display: flex; flex-direction: row; gap: 16px; align-items: center; justify-content: center; flex-wrap: wrap;",
                         Link {
@@ -67,7 +66,7 @@ pub fn Landing() -> Element {
                         }
                         h3 { style: "font-size: 1.25rem; font-weight: 600; margin-bottom: 8px;", "Restricted Spending" }
                         p { style: "color: #666; line-height: 1.6;",
-                            "Vouchers can only be spent at pre-approved partner addresses using Simplicity covenant restrictions."
+                            "Vouchers can only be spent with pre-approved partners using a Multisig arrangement."
                         }
                     }
                     div { class: "panel-section",
@@ -76,16 +75,7 @@ pub fn Landing() -> Element {
                         }
                         h3 { style: "font-size: 1.25rem; font-weight: 600; margin-bottom: 8px;", "Covenant Recursion" }
                         p { style: "color: #666; line-height: 1.6;",
-                            "Change outputs automatically inherit the same covenant, ensuring perpetual compliance with spending rules."
-                        }
-                    }
-                    div { class: "panel-section",
-                        div { style: "width: 48px; height: 48px; background-color: rgba(0, 9, 12, 0.1); border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-bottom: 16px;",
-                            "⚡"
-                        }
-                        h3 { style: "font-size: 1.25rem; font-weight: 600; margin-bottom: 8px;", "Liquid Testnet" }
-                        p { style: "color: #666; line-height: 1.6;",
-                            "Fast, confidential transactions on Liquid Testnet with low fees and instant settlement."
+                            "Change outputs automatically inherit the same covenant, ensuring ease of use for participants."
                         }
                     }
                 }

@@ -103,8 +103,8 @@ body {
 }
 
 .button:hover {
-    background-color: #00090C;
-    color: #ffffff;
+    background-color: #00090C !important;
+    color: #ffffff !important;
 }
 
 .button:disabled {
