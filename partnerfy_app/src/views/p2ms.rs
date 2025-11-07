@@ -351,11 +351,43 @@ pub fn P2MS() -> Element {
                     .or_else(|| utxo_data["scriptpubkey"].as_str())
                     .unwrap_or("");
                 let asset = utxo_data["asset"].as_str().unwrap_or("");
-                // Script uses: VALUE=$(jq -r .value) - this is in sats (as a number)
-                // elements-cli gettxout returns value as a number (sats), not BTC
-                let value_sats = utxo_data["value"].as_u64()
-                    .or_else(|| utxo_data["value"].as_f64().map(|v| (v * 100_000_000.0) as u64))
-                    .unwrap_or(0);
+                
+                // CRITICAL: Extract value correctly - this is used to build the message hash for signing
+                // elements-cli gettxout returns value in BTC as a decimal number (e.g., 0.001 for 100000 sats)
+                // hal-simplicity expects value in sats (e.g., 100000) when building the sighash message
+                // The bash script uses: VALUE=$(jq -r .value) which returns the raw value from JSON
+                // Since elements-cli returns BTC, we MUST convert to sats for hal-simplicity
+                // Using the wrong value here causes "signing the wrong message" errors
+                let value_sats = match utxo_data["value"] {
+                    serde_json::Value::Number(ref n) => {
+                        // elements-cli gettxout returns value in BTC (decimal)
+                        // Convert to sats by multiplying by 100,000,000
+                        if let Some(v_btc) = n.as_f64() {
+                            // Always convert BTC to sats (round to avoid floating point issues)
+                            (v_btc * 100_000_000.0).round() as u64
+                        } else if let Some(v) = n.as_u64() {
+                            // If it's already an integer, check if it's reasonable
+                            // Values > 21 million are likely already in sats
+                            // Values < 21 million could be BTC or sats, but elements-cli returns BTC
+                            // For safety, if value is very large (> 1 BTC in sats), assume it's already sats
+                            if v > 100_000_000 {
+                                v // Already in sats
+                            } else {
+                                // Small integer, likely BTC - convert to sats
+                                (v as f64 * 100_000_000.0).round() as u64
+                            }
+                        } else {
+                            0
+                        }
+                    }
+                    serde_json::Value::String(ref s) => {
+                        // Parse string value - elements-cli returns BTC as decimal string
+                        s.parse::<f64>()
+                            .map(|v_btc| (v_btc * 100_000_000.0).round() as u64)
+                            .unwrap_or(0)
+                    }
+                    _ => 0,
+                };
                 
                 if script_pubkey.is_empty() || asset.is_empty() || value_sats == 0 {
                     status_message.set(format!("Failed to extract UTXO data. Response: {}", serde_json::to_string_pretty(&utxo_data).unwrap_or_default()));
@@ -443,7 +475,24 @@ pub fn P2MS() -> Element {
                 }
                 
                 // Format: HEX:ASSET:VALUE (value in sats, matching script)
+                // CRITICAL: The value must be in sats for hal-simplicity to build the correct message hash
+                // If the value is wrong, signatures will fail with "Assertion failed inside jet"
                 let value_str = value_sats.to_string();
+                
+                // Debug: Log the value being used (for troubleshooting)
+                status_message.set(format!(
+                    "Updating PSET with Simplicity data...\n\
+                    Value: {} sats ({} L-BTC)\n\
+                    ScriptPubKey: {}...\n\
+                    Asset: {}\n\
+                    CMR: {}...",
+                    value_sats,
+                    value_sats as f64 / 100_000_000.0,
+                    script_pubkey.chars().take(20).collect::<String>(),
+                    asset,
+                    cmr.chars().take(20).collect::<String>()
+                ));
+                
                 let updated_pset = match hal_context.update_pset_input(
                     &base_pset,
                     0,
@@ -505,15 +554,17 @@ pub fn P2MS() -> Element {
                 }
                 
                 // Step 1: Sign with private keys and capture signatures
-                let mut current_pset = pset.clone();
+                // IMPORTANT: Use the same PSET for all signatures and finalization
+                // Signatures are PSET-specific - if the PSET changes, signatures become invalid
+                let current_pset = pset.clone();
                 let privkey1 = privkey_1.read().clone();
                 let privkey2 = privkey_2.read().clone();
                 let privkey3 = privkey_3.read().clone();
                 
                 // Validate private keys match expected pattern (for p2ms.simf with 1*G, 2*G, 3*G)
-                // pk1 = 1*G (private key should end in ...0001)
-                // pk2 = 2*G (private key should end in ...0002)
-                // pk3 = 3*G (private key should end in ...0003)
+                // pk1 = 1*G (private key should end in ...0001) = 0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798
+                // pk2 = 2*G (private key should end in ...0002) = 0xc6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5
+                // pk3 = 3*G (private key should end in ...0003) = 0xf9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9
                 // Note: This is a heuristic check. The actual public key derivation would be more accurate,
                 // but this helps catch common mistakes where keys are in the wrong fields.
                 let mut key_warnings = Vec::new();
@@ -522,16 +573,16 @@ pub fn P2MS() -> Element {
                 let privkey3_trimmed = privkey3.trim().to_lowercase();
                 
                 if !privkey1.is_empty() && !privkey1_trimmed.ends_with("0001") {
-                    key_warnings.push("Warning: privkey_1 doesn't end in ...0001. It should correspond to pk1 (0x79be667e... = 1*G). If your key is correct, you can ignore this warning.");
+                    key_warnings.push("⚠️  WARNING: privkey_1 doesn't end in ...0001. It should correspond to pk1 (0x79be667e... = 1*G).\n   If you get 'Assertion failed inside jet', the signatures might be in wrong positions.");
                 }
                 if !privkey2.is_empty() && !privkey2_trimmed.ends_with("0002") {
-                    key_warnings.push("Warning: privkey_2 doesn't end in ...0002. It should correspond to pk2 (0xc6047f94... = 2*G). If your key is correct, you can ignore this warning.");
+                    key_warnings.push("⚠️  WARNING: privkey_2 doesn't end in ...0002. It should correspond to pk2 (0xc6047f94... = 2*G).\n   If you get 'Assertion failed inside jet', the signatures might be in wrong positions.");
                 }
                 if !privkey3.is_empty() && !privkey3_trimmed.ends_with("0003") {
-                    key_warnings.push("Warning: privkey_3 doesn't end in ...0003. It should correspond to pk3 (0xf9308a01... = 3*G). If your key is correct, you can ignore this warning.");
+                    key_warnings.push("⚠️  WARNING: privkey_3 doesn't end in ...0003. It should correspond to pk3 (0xf9308a01... = 3*G).\n   If you get 'Assertion failed inside jet', the signatures might be in wrong positions.");
                 }
                 if !key_warnings.is_empty() {
-                    status_message.set(format!("{}\n\nContinuing with signing...", key_warnings.join("\n")));
+                    status_message.set(format!("{}\n\nContinuing with signing...", key_warnings.join("\n\n")));
                 }
                 
                 let mut sig1: Option<String> = None;
@@ -719,15 +770,36 @@ pub fn P2MS() -> Element {
                 // Construct the final array string
                 let updated_array_string = format!("[{}]", array_elements.join(", "));
                 
-                // Debug: Show which signatures were placed
+                // Debug: Show which signatures were placed and which public keys they should match
                 let sig_count = array_elements.iter().filter(|s| !s.starts_with("None")).count();
-                status_message.set(format!(
-                    "Witness file updated with {} signature(s):\nPosition 0 (pk1): {}\nPosition 1 (pk2): {}\nPosition 2 (pk3): {}",
+                let sig_details = format!(
+                    "Witness file updated with {} signature(s):\n\n\
+                    Position 0 (pk1 = 0x79be667e... = 1*G): {}\n\
+                    Position 1 (pk2 = 0xc6047f94... = 2*G): {}\n\
+                    Position 2 (pk3 = 0xf9308a01... = 3*G): {}\n\n\
+                    ⚠️  IMPORTANT: Each signature must verify against its corresponding public key.\n\
+                    If you get 'Assertion failed inside jet', check:\n\
+                    1. Private keys match the public keys (privkey_1 → pk1, privkey_2 → pk2, privkey_3 → pk3)\n\
+                    2. Signatures were generated with the same PSET that's being finalized\n\
+                    3. At least 2 signatures are valid",
                     sig_count,
-                    if array_elements[0].starts_with("None") { "None".to_string() } else { format!("Some(0x{}...)", &array_elements[0].chars().skip(9).take(16).collect::<String>()) },
-                    if array_elements[1].starts_with("None") { "None".to_string() } else { format!("Some(0x{}...)", &array_elements[1].chars().skip(9).take(16).collect::<String>()) },
-                    if array_elements[2].starts_with("None") { "None".to_string() } else { format!("Some(0x{}...)", &array_elements[2].chars().skip(9).take(16).collect::<String>()) },
-                ));
+                    if array_elements[0].starts_with("None") { 
+                        "None (no signature)".to_string() 
+                    } else { 
+                        format!("Some(0x{}...) - must verify against pk1", &array_elements[0].chars().skip(9).take(16).collect::<String>()) 
+                    },
+                    if array_elements[1].starts_with("None") { 
+                        "None (no signature)".to_string() 
+                    } else { 
+                        format!("Some(0x{}...) - must verify against pk2", &array_elements[1].chars().skip(9).take(16).collect::<String>()) 
+                    },
+                    if array_elements[2].starts_with("None") { 
+                        "None (no signature)".to_string() 
+                    } else { 
+                        format!("Some(0x{}...) - must verify against pk3", &array_elements[2].chars().skip(9).take(16).collect::<String>()) 
+                    },
+                );
+                status_message.set(sig_details);
                 
                 // Update the JSON with the new array string, ensuring "value" comes before "type"
                 // We'll rebuild the JSON structure to control field order

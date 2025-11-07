@@ -676,6 +676,16 @@ impl HalWrapper {
         cmr: &str,
         privkey: &str,
     ) -> Result<String> {
+        // Format private key: strip whitespace and 0x prefix if present
+        // The bash script uses keys like "0000000000000000000000000000000000000000000000000000000000000001"
+        // (hex string without 0x prefix)
+        let privkey_clean = privkey.trim();
+        let privkey_hex = if privkey_clean.starts_with("0x") || privkey_clean.starts_with("0X") {
+            &privkey_clean[2..]
+        } else {
+            privkey_clean
+        };
+        
         let mut cmd = Command::new(&self.hal_cmd());
         cmd.arg("simplicity")
             .arg("sighash")
@@ -683,7 +693,7 @@ impl HalWrapper {
             .arg(input_index.to_string())
             .arg(cmr)
             .arg("-x")
-            .arg(privkey);
+            .arg(privkey_hex);
 
         // Note: The command structure matches the script exactly:
         // hal-simplicity simplicity sighash "$PSET" 0 "$CMR" -x "$PRIVKEY_1"
@@ -723,7 +733,18 @@ impl HalWrapper {
         match json.get("signature") {
             Some(v) => {
                 match v.as_str() {
-                    Some(s) => Ok(s.to_string()),
+                    Some(s) => {
+                        // Strip any existing 0x prefix and whitespace, then return clean hex string
+                        // The bash script adds 0x prefix when inserting into witness file,
+                        // so we need to ensure the signature doesn't already have it
+                        let sig = s.trim();
+                        let sig_clean = if sig.starts_with("0x") || sig.starts_with("0X") {
+                            &sig[2..]
+                        } else {
+                            sig
+                        };
+                        Ok(sig_clean.to_string())
+                    },
                     None => Err(anyhow::anyhow!(
                         "Signature field is not a string in response\n\nFull JSON response:\n{}\n\nStdout:\n{}\n\nStderr:\n{}",
                         serde_json::to_string_pretty(&json).unwrap_or_else(|_| "Failed to serialize".to_string()),
