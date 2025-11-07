@@ -1,23 +1,31 @@
 #navbar {
     display: flex;
     flex-direction: row;
-    background-color: #00090C;
+    background-color: var(--background);
+    border-bottom: 1px solid var(--border);
     padding: 16px 24px;
-    margin: -20px -20px 20px -20px;
+    gap: 16px;
+    align-items: center;
 }
 
 #navbar a {
-    color: #ffffff;
-    margin-right: 20px;
+    color: var(--muted-foreground);
     text-decoration: none;
-    transition: color 0.2s ease;
+    transition: all 0.2s ease;
     font-size: 1rem;
     padding: 8px 16px;
-    border-radius: 5px;
+    border-radius: var(--radius);
 }
 
-#navbar a:hover {
-    cursor: pointer;
-    color: #91a4d2;
-    background-color: rgba(145, 164, 210, 0.1);
+#navbar a:first-child {
+    color: var(--foreground);
+}
+
+#navbar a:first-child:hover {
+    color: var(--accent);
+}
+
+#navbar a:not(:first-child):hover {
+    color: var(--foreground);
+    background-color: var(--muted);
 }
