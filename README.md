@@ -2,6 +2,12 @@
 
 **Partnerfy** is a desktop application for creating and managing **Simplicity covenant-based contracts** on **Liquid Testnet**. It provides workflows for working with multisig contracts (P2MS) and covenant-enforced vouchers.
 
+## Desktop App
+
+<img width="1470" height="892" alt="Screenshot 2025-11-07 at 07 07 35" src="https://github.com/user-attachments/assets/0159ca8f-d599-498e-8e15-76116663ffcb" />
+<img width="1470" height="891" alt="Screenshot 2025-11-07 at 07 07 53" src="https://github.com/user-attachments/assets/7d5f74b1-a160-46c9-a093-c54450c54301" />
+
+
 ## Overview
 
 Partnerfy is a **Dioxus** desktop application (Rust) that enables you to:
