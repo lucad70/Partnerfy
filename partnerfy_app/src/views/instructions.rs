@@ -257,8 +257,8 @@ pub fn Instructions() -> Element {
                     }
                     Link {
                         to: crate::Route::VoucherPage {},
-                        class: "button",
-                        style: "font-size: 1.125rem; padding: 16px 32px; background-color: transparent; border: 2px solid #00090C;",
+                        class: "button outline",
+                        style: "font-size: 1.125rem; padding: 16px 32px;",
                         "Voucher"
                     }
                 }

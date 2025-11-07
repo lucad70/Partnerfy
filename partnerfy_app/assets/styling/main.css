@@ -1,18 +1,63 @@
+/* CSS Variables - Design System */
+:root {
+    --accent: #2DD4BF;
+    --accent-foreground: #ffffff;
+    --background: #ffffff;
+    --foreground: #0f172a;
+    --muted: #f1f5f9;
+    --muted-foreground: #64748b;
+    --border: #e2e8f0;
+    --input: #e2e8f0;
+    --ring: #2DD4BF;
+    --radius: 0.5rem;
+}
+
+/* Typography */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
 button {
     all: unset;
     box-sizing: border-box;
 }
 
 body {
-    background-color: #ffffff;
-    color: #00090C;
-    font-family: 'DM Sans', Tahoma, Geneva, Verdana, sans-serif;
-    margin: 20px;
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+    margin: 0;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+h1 {
+    font-size: 3.5rem;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+    color: var(--foreground);
+}
+
+h2 {
+    font-size: 2.5rem;
+    font-weight: 700;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+    color: var(--foreground);
+}
+
+h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--foreground);
 }
 
 #promoter-panel,
 #participant-panel,
-#partner-panel {
+#partner-panel,
+#p2ms-panel,
+#voucher-panel {
     max-width: 1200px;
     margin: 0 auto;
     padding: 20px;
@@ -44,19 +89,26 @@ body {
     }
 }
 
+/* Panel Sections */
 .panel-section {
-    background-color: #ffffff;
-    border: 2px solid #00090C;
-    border-radius: 10px;
+    background-color: var(--background);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     padding: 24px;
     margin-bottom: 24px;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
+    transition: box-shadow 0.2s ease;
+}
+
+.panel-section:hover {
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
 }
 
 .panel-section h2 {
     font-size: 1.5rem;
     font-weight: 600;
     margin-bottom: 20px;
-    color: #00090C;
+    color: var(--foreground);
 }
 
 .panel-section label {
@@ -64,100 +116,124 @@ body {
     font-size: 0.9rem;
     font-weight: 500;
     margin-bottom: 8px;
-    color: #00090C;
+    color: var(--foreground);
 }
 
+/* Input Fields */
 .panel-section input,
 .panel-section textarea {
     width: 100%;
-    padding: 12px;
-    border: 2px solid #00090C;
-    border-radius: 5px;
-    font-family: 'DM Sans', sans-serif;
+    padding: 10px 14px;
+    border: 1px solid var(--input);
+    border-radius: calc(var(--radius) - 2px);
+    font-family: 'Inter', sans-serif;
     font-size: 1rem;
     box-sizing: border-box;
-    background-color: #ffffff;
-    color: #00090C;
+    background-color: var(--background);
+    color: var(--foreground);
+    transition: all 0.2s ease;
 }
 
 .panel-section input:focus,
 .panel-section textarea:focus {
     outline: none;
-    border-color: #91a4d2;
+    border-color: var(--ring);
+    box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.1);
 }
 
+/* Buttons */
 .button {
-    color: #00090C;
+    color: var(--accent-foreground);
     text-decoration: none;
-    margin-top: 10px;
     margin: 10px 0px;
-    border: 2px solid #00090C;
-    border-radius: 30px;
+    border: none;
+    border-radius: calc(var(--radius) + 4px);
     padding: 12px 24px;
     font-size: 1rem;
+    font-weight: 500;
     cursor: pointer;
-    background-color: #ffffff;
+    background-color: var(--accent);
     transition: all 0.2s ease;
     display: inline-block;
     text-align: center;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
 }
 
 .button:hover {
-    background-color: #00090C !important;
-    color: #ffffff !important;
+    background-color: #14b8a6;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+    transform: translateY(-1px);
 }
 
 .button:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+    transform: none;
 }
 
 .button:disabled:hover {
-    background-color: #ffffff;
-    color: #00090C;
+    background-color: var(--accent);
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    transform: none;
 }
 
+.button.outline {
+    background-color: transparent;
+    color: var(--foreground);
+    border: 1px solid var(--border);
+}
+
+.button.outline:hover {
+    background-color: var(--muted);
+    color: var(--foreground);
+    border-color: var(--border);
+}
+
+/* Status Messages */
 .status-message {
-    background-color: #f5f5f5;
-    border: 1px solid #00090C;
-    border-radius: 5px;
+    background-color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     padding: 16px;
     margin-top: 16px;
-    font-family: 'Roboto Mono', 'DM Sans', 'Fira Code', monospace;
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Fira Code', monospace;
     font-size: 0.9rem;
     white-space: pre-wrap;
-    color: #00090C;
+    color: var(--foreground);
 }
 
+/* Voucher Items */
 .voucher-item {
     padding: 16px;
-    border: 2px solid #00090C;
-    border-radius: 5px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     cursor: pointer;
     margin-bottom: 12px;
     transition: all 0.2s ease;
 }
 
 .voucher-item:hover {
-    background-color: #f5f5f5;
+    background-color: var(--muted);
+    border-color: var(--accent);
 }
 
 .voucher-item.selected {
-    background-color: #e3f2fd;
-    border-color: #91a4d2;
+    background-color: rgba(45, 212, 191, 0.1);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.1);
 }
 
 .voucher-item .voucher-id {
     font-weight: 600;
     font-size: 1rem;
     margin-bottom: 4px;
-    color: #00090C;
+    color: var(--foreground);
 }
 
 .voucher-item .voucher-amount {
     font-size: 0.9rem;
-    color: #666;
-    font-family: 'Roboto Mono', monospace;
+    color: var(--muted-foreground);
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
 }
 
 .voucher-list {
@@ -166,20 +242,23 @@ body {
     gap: 12px;
 }
 
+/* Info Boxes */
 .info-box {
     padding: 16px;
-    border-radius: 5px;
+    border-radius: var(--radius);
     margin-bottom: 16px;
 }
 
 .info-box.info {
-    background-color: #e3f2fd;
-    border: 1px solid #91a4d2;
+    background-color: rgba(45, 212, 191, 0.1);
+    border: 1px solid var(--accent);
+    color: var(--foreground);
 }
 
 .info-box.warning {
     background-color: #fff3cd;
     border: 1px solid #ffc107;
+    color: var(--foreground);
 }
 
 .info-box p {
@@ -197,4 +276,44 @@ body {
     margin-bottom: 8px;
     font-size: 0.9rem;
     line-height: 1.5;
+    color: var(--foreground);
+}
+
+/* Loading Indicator */
+.loading {
+    text-align: center;
+    padding: 16px;
+    color: var(--muted-foreground);
+    font-size: 0.9rem;
+}
+
+.loading::after {
+    content: '...';
+    animation: loading-dots 1.5s steps(4, end) infinite;
+}
+
+@keyframes loading-dots {
+    0%, 20% {
+        content: '.';
+    }
+    40% {
+        content: '..';
+    }
+    60%, 100% {
+        content: '...';
+    }
+}
+
+/* Navigation Link */
+.nav-link {
+    color: var(--muted-foreground);
+    text-decoration: none;
+    transition: all 0.2s ease;
+    padding: 8px 12px;
+    border-radius: var(--radius);
+}
+
+.nav-link:hover {
+    color: var(--foreground);
+    background-color: var(--muted);
 }

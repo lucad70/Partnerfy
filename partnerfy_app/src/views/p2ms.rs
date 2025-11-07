@@ -1478,7 +1478,7 @@ fn main() {{
             }
             
             if is_loading() {
-                div { style: "text-align: center; padding: 16px;", "Loading..." }
+                div { class: "loading", "Loading" }
             }
         }
     }
