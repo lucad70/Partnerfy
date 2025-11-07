@@ -583,17 +583,19 @@ fn main() {{
                 // Create PSET with 3 outputs:
                 // Output 0: Payment address
                 // Output 1: Contract address (recursive covenant)
-                // Output 2: Fee (handled by create_pset with fee parameter)
+                // Output 2: Fee output
+                // 
+                // IMPORTANT: For the covenant to work, we need 3 actual outputs.
+                // The fee must be Output 2 and marked as a fee output.
+                // We'll create it with {"fee": amount} which should create a fee output.
                 let inputs = vec![(txid.clone(), vout)];
                 let outputs = vec![
                     (destination.clone(), amount_btc),           // Output 0: Payment
                     (contract_addr.clone(), change_btc),         // Output 1: Recursive covenant
                 ];
                 
-                // Note: create_pset adds fee as a separate output, so we'll have:
-                // Output 0: destination (payment)
-                // Output 1: contract_addr (recursive)
-                // Output 2: fee (added by create_pset)
+                // Create PSET with fee - the fee should appear as Output 2
+                // Note: If this doesn't create 3 outputs, we may need to manually add the fee output
                 let base_pset = match rpc_context.create_pset(&inputs, &outputs, Some(fee_btc)).await {
                     Ok(pset) => pset,
                     Err(e) => {
@@ -666,35 +668,32 @@ fn main() {{
                     }
                 }
                 
-                // Show outputs
-                if let Some(outputs) = decoded_pset.get("tx").and_then(|tx| tx.get("vout")).and_then(|v| v.as_array()) {
-                    decoded_info.push_str(&format!("\nOUTPUTS ({}):\n", outputs.len()));
+                // Show outputs - try both structures (tx.vout and outputs array)
+                let mut output_count = 0;
+                let mut outputs_found = false;
+                
+                // Try the outputs array format first (what decodepsbt actually returns)
+                if let Some(outputs) = decoded_pset.get("outputs").and_then(|v| v.as_array()) {
+                    outputs_found = true;
+                    output_count = outputs.len();
+                    decoded_info.push_str(&format!("\nOUTPUTS ({}):\n", output_count));
                     for (i, output) in outputs.iter().enumerate() {
-                        let value = output.get("value").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let value = output.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
                         let value_sats = (value * 100_000_000.0).round() as u64;
                         
-                        // Try to get address from scriptPubKey
-                        let address = if let Some(script_pubkey) = output.get("scriptPubKey") {
-                            if let Some(addresses) = script_pubkey.get("addresses").and_then(|v| v.as_array()) {
-                                if let Some(addr) = addresses.first().and_then(|v| v.as_str()) {
-                                    addr.to_string()
-                                } else {
-                                    "N/A".to_string()
-                                }
+                        // Try to get address from script
+                        let address = if let Some(script) = output.get("script") {
+                            if let Some(addr) = script.get("address").and_then(|v| v.as_str()) {
+                                addr.to_string()
                             } else {
-                                // Check if it's a fee output (no address)
-                                if script_pubkey.get("type").and_then(|v| v.as_str()) == Some("fee") {
-                                    "FEE OUTPUT".to_string()
-                                } else {
-                                    "N/A".to_string()
-                                }
+                                "N/A".to_string()
                             }
                         } else {
                             "N/A".to_string()
                         };
                         
-                        // Check if it's a fee output
-                        let output_type = if address == "FEE OUTPUT" || output.get("fee").is_some() {
+                        // Check if it's a fee output (fee outputs might not have an address)
+                        let output_type = if output.get("fee").is_some() || address == "N/A" && i == 2 {
                             "Fee"
                         } else if i == 0 {
                             "Payment"
@@ -709,8 +708,70 @@ fn main() {{
                             i, value, value_sats, address, output_type
                         ));
                     }
-                } else {
+                } 
+                // Fallback to tx.vout format
+                else if let Some(outputs) = decoded_pset.get("tx").and_then(|tx| tx.get("vout")).and_then(|v| v.as_array()) {
+                    outputs_found = true;
+                    output_count = outputs.len();
+                    decoded_info.push_str(&format!("\nOUTPUTS ({}):\n", output_count));
+                    for (i, output) in outputs.iter().enumerate() {
+                        let value = output.get("value").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let value_sats = (value * 100_000_000.0).round() as u64;
+                        
+                        // Try to get address from scriptPubKey
+                        let address = if let Some(script_pubkey) = output.get("scriptPubKey") {
+                            if let Some(addresses) = script_pubkey.get("addresses").and_then(|v| v.as_array()) {
+                                if let Some(addr) = addresses.first().and_then(|v| v.as_str()) {
+                                    addr.to_string()
+                                } else {
+                                    "N/A".to_string()
+                                }
+                            } else {
+                                "N/A".to_string()
+                            }
+                        } else {
+                            "N/A".to_string()
+                        };
+                        
+                        // Check if it's a fee output
+                        let output_type = if output.get("fee").is_some() {
+                            "Fee"
+                        } else if i == 0 {
+                            "Payment"
+                        } else if i == 1 {
+                            "Recursive Covenant"
+                        } else {
+                            "Other"
+                        };
+                        
+                        decoded_info.push_str(&format!(
+                            "  Output {}: {} L-BTC ({} sats) to {} [{}]\n",
+                            i, value, value_sats, address, output_type
+                        ));
+                    }
+                }
+                
+                if !outputs_found {
                     decoded_info.push_str("\nOUTPUTS: Could not decode outputs\n");
+                }
+                
+                // Check for fee in top-level fields
+                if let Some(fee_value) = decoded_pset.get("fee").and_then(|v| v.as_f64()) {
+                    decoded_info.push_str(&format!("\n⚠️  WARNING: Fee found as separate field: {} L-BTC ({} sats)\n", 
+                        fee_value, (fee_value * 100_000_000.0).round() as u64));
+                    decoded_info.push_str("The covenant requires the fee to be Output 2. The fee might need to be added as a separate output.\n");
+                }
+                
+                // Check output count
+                if output_count != 3 {
+                    decoded_info.push_str(&format!(
+                        "\n⚠️  ERROR: Expected 3 outputs but found {}!\n\
+                        The covenant requires exactly 3 outputs:\n\
+                        - Output 0: Payment\n\
+                        - Output 1: Recursive Covenant\n\
+                        - Output 2: Fee\n",
+                        output_count
+                    ));
                 }
                 
                 // Show expected vs actual
